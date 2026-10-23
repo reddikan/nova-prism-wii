@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<app version="1">
+  <name>Nova Prism</name>
+  <coder>Claude</coder>
+  <version>1.0</version>
+  <release_date>20261023000000</release_date>
+  <short_description>Bright low-poly space shooter (Classic Controller)</short_description>
+  <long_description>Blast through the Crystal Caverns with four weapons, turn on a dime to fight in both directions, and take down the Hexacore.
+
+Controls (Classic Controller):
+Left stick / D-Pad: fly
+A: Pulse Blaster (hold; watch the heat)
+B: Nova Blade (hold; spinning sabres, cut bullets)
+X: Swarm Missiles (8 homing missiles)
+Y: Prism Lance (screen-wide beam)
+L / R: turn around
++: pause
+-: 16:9 / 4:3 screen
+HOME: exit</long_description>
+</app>
