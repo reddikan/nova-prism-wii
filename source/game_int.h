@@ -12,12 +12,12 @@
 #define PI_F 3.14159265359f
 
 /* tuning */
-#define SHIP_R        10.0f
+#define SHIP_R        11.0f
 #define SHIP_SPEED    390.0f
 #define BOLT_SPEED    1250.0f
-#define BLADE_R       112.0f
+#define BLADE_R       122.0f
 #define LANCE_LEN     1000.0f
-#define LANCE_W       40.0f
+#define LANCE_W       58.0f
 #define ENERGY_MAX    100.0f
 #define COST_BLADE    10.0f
 #define DRAIN_BLADE   36.0f

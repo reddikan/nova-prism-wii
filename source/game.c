@@ -185,6 +185,10 @@ static void build_terrain(Game *g)
 {
     const LevelDef *L = g->L;
     uint32_t s = L->seed;
+    if (L->style == STYLE_SKYWAY) {                    /* open sky above, the track's near barrier below */
+        for (int i = 0; i < L->nterr; i++) { g->ttop[i] = 34.0f; g->tbot[i] = 446.0f; }
+        return;
+    }
     for (int i = 0; i < L->nterr; i++) {
         float a = hashf(s + (uint32_t)i * 7919u), b = hashf(s * 31u + (uint32_t)i * 104729u);
         float wav = sinf((float)i * TAU / (float)L->nterr * 3.0f) * 0.5f + 0.5f;
@@ -524,7 +528,7 @@ static void fire_blaster(Game *g)
         if (b->alive) continue;
         g->shot_side = !g->shot_side;
         b->alive = 1;
-        b->x = wrapx(g, g->px + (float)g->face * 24.0f);
+        b->x = wrapx(g, g->px + (float)g->face * 36.0f);
         b->y = g->py + (g->shot_side ? -5.0f : 5.0f);
         b->vx = (float)g->face * BOLT_SPEED + g->pvx * 0.3f;
         b->vy = g->pvy * 0.12f + frange(g, -22, 22);
@@ -532,8 +536,9 @@ static void fire_blaster(Game *g)
         b->dmg = 1.0f;
         break;
     }
-    pglow(g, g->px + (float)g->face * 26.0f, g->py, g->pvx, g->pvy, 0.06f, 26.0f, col_a(COL_A, 0.9f));
-    spark(g, g->px + (float)g->face * 26.0f, g->py, (g->face > 0 ? 0.0f : PI_F) + frange(g, -0.5f, 0.5f), frange(g, 200, 420), 0.1f, 2.0f, COL_A);
+    pglow(g, g->px + (float)g->face * 42.0f, g->py, g->pvx, g->pvy, 0.07f, 40.0f, col_a(COL_A, 0.95f));
+    spark(g, g->px + (float)g->face * 42.0f, g->py, (g->face > 0 ? 0.0f : PI_F) + frange(g, -0.5f, 0.5f), frange(g, 200, 420), 0.12f, 3.0f, 0xFFFFFFFFu);
+    spark(g, g->px + (float)g->face * 42.0f, g->py, (g->face > 0 ? 0.0f : PI_F) + frange(g, -0.5f, 0.5f), frange(g, 200, 420), 0.1f, 2.0f, COL_A);
     sfxp(g, SFX_SHOT, 118 + (int)(rnd(g) % 22));
     g->heat += 0.042f;
     g->pvx -= (float)g->face * 6.0f;
@@ -608,13 +613,13 @@ static void fire_missiles(Game *g)
 static void missile_explode(Game *g, Missile *m)
 {
     m->alive = 0;
-    explode(g, m->x, m->y, 0.9f, COL_X, 0xFFD15CFFu);
+    explode(g, m->x, m->y, 1.2f, COL_X, 0xFFD15CFFu);
     sfxp(g, SFX_EXPL_S, 100 + (int)(rnd(g) % 20));
     for (int i = 0; i < MAX_EN; i++) {
         Enemy *e = &g->en[i];
         if (!e->alive || e->warp) continue;
         float dx = wd(g, e->x - m->x), dy = e->y - m->y;
-        float rr = 58.0f + e->r;
+        float rr = 70.0f + e->r;
         if (dx * dx + dy * dy < rr * rr) hurt_enemy(g, i, 6.0f, dx * 2.0f, dy * 2.0f);
     }
 }
@@ -655,7 +660,7 @@ static void fire_lance(Game *g)
     g->zoom_kick = 0.045f;
     flash(g, 0.35f, 0.4f, 0.9f, 1.0f);
     sfx(g, SFX_LANCE);
-    ring(g, g->px + (float)g->face * 26.0f, g->py, 120.0f, 0.3f, 10.0f, COL_Y);
+    ring(g, g->px + (float)g->face * 42.0f, g->py, 150.0f, 0.3f, 14.0f, COL_Y);
     g->wpn_flash[3] = 1.0f;
 }
 
@@ -784,7 +789,7 @@ static void update_player(Game *g, const Input *in, uint32_t pressed, float dt)
         g->wpn_flash[3] = 1.0f;
         for (int k = 0; k < 3; k++) {                       /* particles rushing into the nose */
             float a = frange(g, 0, TAU), r = frange(g, 50, 90);
-            float nx = g->px + (float)g->face * 26.0f, ny = g->py;
+            float nx = g->px + (float)g->face * 42.0f, ny = g->py;
             Part *p = newpart(g, P_SPARK, nx + cosf(a) * r, ny + sinf(a) * r, -cosf(a) * r * 5.0f, -sinf(a) * r * 5.0f, 0.18f, 2.0f,
                               (k & 1) ? COL_Y : col_hsv(frnd(g), 0.6f, 1.0f, 255));
             p->drag = 0;
@@ -808,8 +813,8 @@ static void update_player(Game *g, const Input *in, uint32_t pressed, float dt)
     if (g->trail_t <= 0) {
         g->trail_t = 1.0f / 60.0f;
         memmove(&g->trail[1], &g->trail[0], sizeof(g->trail[0]) * (TRAIL_N - 1));
-        g->trail[0][0] = g->px - (float)g->face * 18.0f * cosf(g->tilt);
-        g->trail[0][1] = g->py - (float)g->face * 18.0f * sinf(g->tilt);
+        g->trail[0][0] = g->px - (float)g->face * 40.0f * cosf(g->tilt);
+        g->trail[0][1] = g->py - (float)g->face * 40.0f * sinf(g->tilt);
         if (g->trail_n < TRAIL_N) g->trail_n++;
     }
     if (g->inv_t > 0) g->inv_t -= dt;
@@ -1073,7 +1078,7 @@ static void update_projectiles(Game *g, float dt)
         for (int k = 0; k < MAX_EN; k++) {
             Enemy *e = &g->en[k];
             if (!e->alive || e->warp) continue;
-            float dx = wd(g, e->x - b->x), dy = e->y - b->y, rr = e->r + 6.0f;
+            float dx = wd(g, e->x - b->x), dy = e->y - b->y, rr = e->r + 9.0f;
             if (fabsf(dx) > rr + 22.0f) continue;
             /* swept test along the bolt's last step so fast bolts can't tunnel */
             float step = b->vx * dt, best = 1e9f;
@@ -1125,7 +1130,7 @@ static void update_projectiles(Game *g, float dt)
         for (int k = 0; k < MAX_EN; k++) {
             const Enemy *e = &g->en[k];
             if (!e->alive || e->warp) continue;
-            float dx = wd(g, e->x - m->x), dy = e->y - m->y, rr = e->r + 9.0f;
+            float dx = wd(g, e->x - m->x), dy = e->y - m->y, rr = e->r + 13.0f;
             if (dx * dx + dy * dy < rr * rr) { missile_explode(g, m); break; }
         }
     }
@@ -1364,12 +1369,14 @@ static void update_scoring(Game *g, float dt)
 
 static void update_camera(Game *g, float dt)
 {
+    float before = g->camx;
     g->cam_lead = approach(g->cam_lead, (float)g->face * 150.0f, dt * 3.0f);
     float target = g->px + g->cam_lead + g->pvx * 0.25f;
     g->camx = wrapx(g, g->camx + wd(g, target - g->camx) * clampf(dt * 5.0f, 0, 1));
     float sx = sxof(g, g->px);                             /* never let the ship leave the screen */
     if (sx < 110.0f) g->camx = wrapx(g, g->camx - (110.0f - sx));
     if (sx > VW - 110.0f) g->camx = wrapx(g, g->camx + (sx - (VW - 110.0f)));
+    g->scroll += wd(g, g->camx - before);
 }
 
 static void update_feel(Game *g, float dt)
@@ -1477,6 +1484,7 @@ void game_update(Game *g, const Input *in, float dt)
     switch (g->state) {
     case ST_TITLE: {
         g->camx = wrapx(g, g->camx + dt * 90.0f);
+        g->scroll += dt * 90.0f;
         g->px = wrapx(g, g->camx - 120.0f + sinf(g->time * 0.8f) * 60.0f);
         g->py = 342.0f + sinf(g->time * 1.3f) * 12.0f;
         g->face = 1; g->alive = 1;
@@ -1486,7 +1494,7 @@ void game_update(Game *g, const Input *in, float dt)
             sfx(g, SFX_MOVE);
         }
         if ((g->frame % 4) == 0)
-            spark(g, g->px - 20.0f, g->py, PI_F + frange(g, -0.2f, 0.2f), frange(g, 200, 400), 0.4f, 3.0f, (g->frame & 4) ? COL_A : 0xFF7A3CFFu);
+            spark(g, g->px - 42.0f, g->py, PI_F + frange(g, -0.2f, 0.2f), frange(g, 200, 400), 0.4f, 3.0f, (g->frame & 4) ? 0x7DF9FFFFu : 0xFFFFFFFFu);
         if (pressed & (BTN_A | BTN_PLUS)) { game_start(g, g->level); return; }
         update_particles(g, dt);
         update_feel(g, dt);

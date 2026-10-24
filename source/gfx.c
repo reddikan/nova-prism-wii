@@ -266,6 +266,8 @@ static const uint8_t *glyph(char ch)
     return NULL;
 }
 
+const uint8_t *gfx_glyph(char ch) { return glyph(ch); }
+
 float gfx_text_width(const char *s, float px)
 {
     int n = (int)strlen(s);

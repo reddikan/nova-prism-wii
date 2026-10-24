@@ -3,7 +3,7 @@
 A bright, low-poly side-view space shooter for the Nintendo Wii, played with the **Wii Classic Controller**.
 Everything is drawn by the Wii's GPU as flat-shaded triangles with additive glow, at a locked **60 fps** in **16:9**.
 
-Fly through the wrap-around **Crystal Caverns**, fight enemies coming from both sides, keep your
+Race along the wrap-around **Neon Skyway** in your blue-and-gold jet, fight enemies coming from both sides, keep your
 multiplier climbing, and take down the **Hexacore**.
 
 ## Controls (Classic Controller)
@@ -27,7 +27,9 @@ get pulled in to refill it. Green hexagons restore a shield pip.
 seconds form a **chain** (big chains pay a bonus), and clearing a wave without getting hit is a **PERFECT** bonus.
 Your rank (S / A / B / C) is shown at the end of the level.
 
-## Level 1: Crystal Caverns
+## Level 1: Neon Skyway
+
+A magenta dusk sky over a city skyline, with a lamp-lined racetrack below you.
 
 10 waves: blue **Shards** that hunt you down (and lunge when they flash red), green **Zip** flocks,
 purple **Spores** that fire bullet fans, segmented **Serpents** that chain-explode when you kill the head,

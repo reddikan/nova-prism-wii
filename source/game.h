@@ -53,8 +53,12 @@ enum { EN_SHARD, EN_ZIP, EN_SPORE, EN_SERPENT, EN_SEG, EN_BOSS, EN_SHIELD, EN_TY
 typedef struct { uint8_t type, count; int8_t side; float delay; } SpawnGroup;
 typedef struct { int ngroups; SpawnGroup g[MAX_GROUPS]; } WaveDef;
 
+enum { STYLE_CAVE, STYLE_SKYWAY };     /* background look */
+
 typedef struct {
     const char *name;
+    const char *boss_sub;                /* line under the boss name card */
+    int         style;
     uint32_t    seed;                    /* terrain shape */
     float       width;                   /* world circumference (the level wraps around) */
     int         nterr;                   /* terrain control points */
@@ -64,6 +68,9 @@ typedef struct {
     uint32_t    blob, blob_hi;           /* far parallax shapes */
     uint32_t    terr, terr_hi, terr_lo;  /* terrain base / lit bevel / shadow facet */
     uint32_t    glyph;                   /* drifting background confetti */
+    /* STYLE_SKYWAY colours */
+    uint32_t    sky_mid, horizon, cloud, mountain, mountain_hi, city, city_hi, window;
+    uint32_t    grass, grass_hi, track, track_hi, rail, lamp;
     int         nwaves;
     WaveDef     waves[MAX_WAVES];
 } LevelDef;
@@ -132,6 +139,7 @@ typedef struct {
 
     /* camera & feel */
     float camx, cam_lead;
+    float scroll;                         /* camera distance travelled (never wraps) for background parallax */
     float shake, shake_t, zoom_kick;
     float flash, flash_r, flash_g, flash_b;
     float hitstop, slowmo, slowmo_t;

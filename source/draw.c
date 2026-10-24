@@ -204,22 +204,104 @@ static void draw_terrain(const Game *g)
 /* ------------------------------------------------------------------ */
 /* ship                                                                 */
 /* ------------------------------------------------------------------ */
+/* The ship is modelled straight from the reference drawing: coordinates are in the drawing's pixels
+ * (2000 x 800, nose pointing right) and converted to game units here. */
+#define MX(px) (((float)(px) - 1080.0f) * 0.044f)
+#define MY(py) (((float)(py) - 500.0f) * 0.055f)
+static void xtri_img(const Xf *t, float ax, float ay, float bx, float by, float cx, float cy, uint32_t c)
+{
+    xtri(t, MX(ax), MY(ay), MX(bx), MY(by), MX(cx), MY(cy), c);
+}
+static void xquad_img(const Xf *t, float ax, float ay, float bx, float by, float cx, float cy, float dx, float dy, uint32_t c)
+{
+    xquad(t, MX(ax), MY(ay), MX(bx), MY(by), MX(cx), MY(cy), MX(dx), MY(dy), c);
+}
+/* stripes across a fin: the band between two slanted edges (rear edge a0->a1, front edge b0->b1), split top to bottom */
+static void fin_stripes(const Xf *t, float ax0, float ay0, float ax1, float ay1, float bx0, float by0, float bx1, float by1, int n)
+{
+    for (int k = 0; k < n; k++) {
+        float u0 = (float)k / (float)n, u1 = (float)(k + 1) / (float)n;
+        uint32_t c = (k & 1) ? 0xF4F4F8FFu : 0xE8262EFFu;
+        xquad_img(t, ax0 + (ax1 - ax0) * u0, ay0 + (ay1 - ay0) * u0, bx0 + (bx1 - bx0) * u0, by0 + (by1 - by0) * u0,
+                  bx0 + (bx1 - bx0) * u1, by0 + (by1 - by0) * u1, ax0 + (ax1 - ax0) * u1, ay0 + (ay1 - ay0) * u1, c);
+    }
+}
+/* italic pixel text painted on the hull; mirrored when the ship faces left so it still reads correctly */
+static void hull_text(const Xf *t, const char *s, float x0, float y0, float pw, float ph, float slant, uint32_t c)
+{
+    int n = (int)strlen(s);
+    float w = ((float)n * 6.0f - 1.0f) * pw, cx = x0 + w * 0.5f;
+    int mirror = t->sx < 0;
+    for (int i = 0; i < n; i++) {
+        const uint8_t *gl = gfx_glyph(s[i]);
+        if (!gl) continue;
+        for (int r = 0; r < 7; r++)
+            for (int col = 0; col < 5; col++) {
+                if (!(gl[r] & (0x10 >> col))) continue;
+                float lx = x0 + ((float)i * 6.0f + (float)col) * pw + (6.0f - (float)r) * slant, ly = y0 + (float)r * ph;
+                float ax = lx, bx = lx + pw;
+                if (mirror) { ax = 2.0f * cx - (lx + pw); bx = 2.0f * cx - lx; }
+                xquad(t, ax, ly, bx, ly, bx, ly + ph, ax, ly + ph, c);
+            }
+    }
+}
+
 static void ship_model(const Xf *t)
 {
-    /* nose at +x. Low-poly manta: lit upper facets, shaded lower facets */
-    xtri(t, 26, 0, 4, -7, -10, 0, 0xFFC56BFFu);          /* upper hull */
-    xtri(t, 26, 0, -10, 0, 4, 7, 0xE8742AFFu);           /* lower hull */
-    xtri(t, 4, -7, -18, -19, -10, 0, 0xFFD96BFFu);       /* top wing */
-    xtri(t, -18, -19, -20, -6, -10, 0, 0xD2592AFFu);
-    xtri(t, 4, 7, -10, 0, -18, 19, 0xC9502AFFu);         /* bottom wing */
-    xtri(t, -18, 19, -10, 0, -20, 6, 0xA83E25FFu);
-    xtri(t, -10, 0, -20, -6, -20, 6, 0x8C3020FFu);       /* engine block */
-    xtri(t, 15, 0, 6, -4, 2, 0, 0x7DF9FFFFu);            /* cockpit gem */
-    xtri(t, 15, 0, 2, 0, 6, 3, 0x2FB5D6FFu);
-    xtri(t, 10, -1, 6, -3, 5, -1, WHITE);
-    xtri(t, -6, -12, -16, -17, -12, -10, 0xFF5C8AFFu);   /* wing stripes */
-    xtri(t, -6, 12, -12, 10, -16, 17, 0xD93A6AFFu);
+    const uint32_t BLUE_HI = 0x2C66F2FFu, BLUE = 0x0C42D2FFu, BLUE_LO = 0x07309EFFu, BLUE_FAR = 0x0A2E92FFu;
+    const uint32_t GOLD = 0xFFC628FFu, GOLD_LO = 0xE59A10FFu, WHITE_ = 0xF4F4F8FFu;
+
+    /* far-side tail fin (behind the body) */
+    xquad_img(t, 755, 228, 918, 228, 1015, 330, 790, 338, BLUE_FAR);
+    fin_stripes(t, 755, 228, 790, 336, 836, 228, 868, 336, 4);
+
+    /* engine block and nozzle */
+    xquad_img(t, 215, 408, 392, 408, 392, 606, 215, 606, 0x2E2E38FFu);
+    xquad_img(t, 215, 408, 392, 408, 392, 448, 215, 448, 0x4C4C5AFFu);
+    xquad_img(t, 215, 566, 392, 566, 392, 606, 215, 606, 0x1C1C24FFu);
+
+    /* main tail fin */
+    xquad_img(t, 222, 142, 466, 142, 712, 400, 268, 420, BLUE);
+    xtri_img(t, 466, 142, 712, 400, 560, 330, BLUE_HI);
+    fin_stripes(t, 222, 142, 268, 420, 300, 142, 372, 420, 6);
+    hull_text(t, "07", MX(388), MY(280), 1.4f, 0.8f, 0.3f, WHITE_);
+
+    /* fuselage: low-poly slices between the top contour, the chine line and the belly */
+    static const float SL[8][4] = {     /* x, top, chine, belly (drawing pixels) */
+        {380, 410, 425, 642}, {712, 352, 412, 642}, {1125, 304, 418, 642}, {1200, 295, 432, 560},
+        {1270, 287, 442, 600}, {1300, 300, 452, 632}, {1700, 490, 522, 636}, {1955, 612, 614, 622},
+    };
+    for (int k = 0; k < 7; k++) {
+        const float *a = SL[k], *b = SL[k + 1];
+        float am = a[2] + (a[3] - a[2]) * 0.62f, bm = b[2] + (b[3] - b[2]) * 0.62f;      /* lower chine */
+        xquad_img(t, a[0], a[1], b[0], b[1], b[0], b[2], a[0], a[2], BLUE_HI);
+        xquad_img(t, a[0], a[2], b[0], b[2], b[0], bm, a[0], am, BLUE);
+        xquad_img(t, a[0], am, b[0], bm, b[0], b[3], a[0], a[3], BLUE_LO);
+    }
+
+    /* gold stripes */
+    xquad_img(t, 445, 416, 512, 414, 592, 642, 512, 642, GOLD);                            /* rear band */
+    xquad_img(t, 1008, 330, 1075, 320, 1345, 426, 1240, 446, GOLD);                         /* diagonal sweep */
+    xquad_img(t, 1240, 446, 1345, 426, 1700, 502, 1655, 528, GOLD);
+    xquad_img(t, 1655, 528, 1700, 502, 1955, 613, 1700, 600, GOLD);                         /* gold nose */
+    xquad_img(t, 1700, 600, 1955, 613, 1955, 622, 1700, 636, GOLD_LO);
+
+    /* canopy */
+    xquad_img(t, 1295, 296, 1500, 338, 1705, 492, 1338, 426, 0x26357CFFu);
+    xquad_img(t, 1312, 302, 1494, 342, 1580, 400, 1322, 356, 0x6F86DCFFu);
+    xtri_img(t, 1330, 312, 1420, 330, 1335, 336, 0xC8D4FFFFu);
+
+    /* eagle emblem */
+    xtri_img(t, 790, 540, 625, 445, 722, 560, WHITE_);
+    xtri_img(t, 790, 562, 652, 500, 738, 588, WHITE_);
+    xtri_img(t, 790, 540, 955, 445, 858, 560, WHITE_);
+    xtri_img(t, 790, 562, 928, 500, 842, 588, WHITE_);
+    xquad_img(t, 774, 508, 806, 508, 800, 600, 780, 600, WHITE_);
+    xtri_img(t, 790, 488, 808, 508, 772, 508, WHITE_);
+    xtri_img(t, 780, 600, 800, 600, 790, 618, WHITE_);
 }
+#define SHIP_TAIL_X MX(215)
+#define SHIP_NOSE_X MX(1955)
 
 static void draw_trail(const Game *g)
 {
@@ -237,7 +319,7 @@ static void draw_trail(const Game *g)
         float w = 7.0f * t + 1.0f;
         if (i > 0 && fabsf(sx - px) < 200.0f) {
             float t0 = 1.0f - (float)(i - 1) / (float)(g->trail_n - 1);
-            uint32_t c0 = col_a(col_mix(0xFF4F7AFFu, 0xFFC23DFFu, t0), t0 * 0.85f), c1 = col_a(col_mix(0xFF4F7AFFu, 0xFFC23DFFu, t), t * 0.85f);
+            uint32_t c0 = col_a(col_mix(0x3A5BFFFFu, 0x8AF6FFFFu, t0), t0 * 0.85f), c1 = col_a(col_mix(0x3A5BFFFFu, 0x8AF6FFFFu, t), t * 0.85f);
             float w0 = 7.0f * t0 + 1.0f;
             gfx_quad4(px + pnx * w0, py + pny * w0, c0 & 0xFFFFFF00u, sx + nx * w, sy + ny * w, c1 & 0xFFFFFF00u, sx, sy, c1, px, py, c0);
             gfx_quad4(px, py, c0, sx, sy, c1, sx - nx * w, sy - ny * w, c1 & 0xFFFFFF00u, px - pnx * w0, py - pny * w0, c0 & 0xFFFFFF00u);
@@ -263,14 +345,15 @@ static void draw_player(const Game *g)
     /* engine flame */
     float fl = 0.75f + 0.25f * sinf(g->time * 60.0f) + 0.15f * hashf((uint32_t)g->frame);
     float boost = 1.0f + clampf((g->pvx * (float)g->face) / SHIP_SPEED, 0, 1) * 0.8f;
-    float L = 16.0f * fl * boost;
-    xtri(&t, -20, -6, -20 - L * 1.4f, 0, -20, 6, col_a(0xFF6A2AFFu, 0.8f));
-    xtri(&t, -20, -4, -20 - L, 0, -20, 4, col_a(0xFFC23DFFu, 0.95f));
-    xtri(&t, -20, -2, -20 - L * 0.55f, 0, -20, 2, WHITE);
-    xglow(&t, -22, 0, 30.0f * fl, col_a(0xFF8A3DFFu, 0.55f));
+    /* blocky cyan thruster flame, like the reference drawing */
+    float L = 11.0f * fl * boost, E = SHIP_TAIL_X, ey = MY(507);
+    xquad(&t, E, ey - 5.4f, E - L * 1.25f, ey - 3.9f, E - L * 1.35f, ey + 3.9f, E, ey + 5.4f, col_a(0x2FA8FFFFu, 0.75f));
+    xquad(&t, E, ey - 4.4f, E - L, ey - 2.9f, E - L * 1.05f, ey + 2.9f, E, ey + 4.4f, col_a(0x7DF9FFFFu, 0.95f));
+    xquad(&t, E, ey - 2.7f, E - L * 0.65f, ey - 1.7f, E - L * 0.7f, ey + 1.7f, E, ey + 2.7f, WHITE);
+    xglow(&t, E - 4.0f, ey, 34.0f * fl, col_a(0x5CC8FFFFu, 0.6f));
     float lx, ly;
     xpt(&t, 0, 0, &lx, &ly);
-    gfx_glow(lx, ly, 80.0f, col_a(0xFFA040FFu, 0.13f));     /* the ship lights up its surroundings */
+    gfx_glow(lx, ly, 90.0f, col_a(0x6FB8FFFFu, 0.14f));     /* the ship lights up its surroundings */
     gfx_blend(BL_ALPHA);
 
     if (!blink) {
@@ -283,7 +366,7 @@ static void draw_player(const Game *g)
         gfx_blend(BL_ADD);
         float h = g->heat;
         uint32_t c = g->overheat ? (((int)(g->time * 12.0f) & 1) ? 0xFF3030FFu : 0xFFA030FFu) : col_mix(0xFFC23DFFu, 0xFF3020FFu, h);
-        gfx_arc(sx, sy, 30.0f, 33.0f, -PI_F * 0.5f, -PI_F * 0.5f + TAU * h, 24, col_a(c, 0.3f), col_a(c, 0.9f));
+        gfx_arc(sx, sy, 48.0f, 52.0f, -PI_F * 0.5f, -PI_F * 0.5f + TAU * h, 24, col_a(c, 0.3f), col_a(c, 0.9f));
         gfx_blend(BL_ALPHA);
     }
 }
@@ -301,12 +384,17 @@ static void draw_blade(const Game *g)
     for (int k = 0; k < 2; k++) {
         float a = g->blade_ang + PI_F * (float)k;
         /* motion-blur sweep behind the blade */
-        gfx_arc(sx, sy, 24.0f, R, a - dir * 2.0f, a, 16, col_a(COL_B, 0.0f), col_a(COL_B, 0.55f));
-        gfx_arc(sx, sy, R - 10.0f, R + 4.0f, a - dir * 1.2f, a, 10, col_a(WHITE, 0.0f), col_a(WHITE, 0.7f));
+        gfx_arc(sx, sy, 30.0f, R + 6.0f, a - dir * 2.0f, a, 16, col_a(COL_B, 0.0f), col_a(COL_B, 0.6f));
+        gfx_arc(sx, sy, R - 16.0f, R + 10.0f, a - dir * 1.2f, a, 10, col_a(WHITE, 0.0f), col_a(WHITE, 0.75f));
         float cx = cosf(a), cy = sinf(a);
-        gfx_glowline(sx + cx * 22.0f, sy + cy * 22.0f, sx + cx * (R + 10.0f), sy + cy * (R + 10.0f), 16.0f, col_a(COL_B, 0.9f));
-        gfx_line(sx + cx * 22.0f, sy + cy * 22.0f, sx + cx * (R + 8.0f), sy + cy * (R + 8.0f), 3.5f, WHITE, WHITE);
-        gfx_glow_cheap(sx + cx * (R + 6.0f), sy + cy * (R + 6.0f), 22.0f, col_a(WHITE, 0.8f));
+        float px_ = -cy, py_ = cx;                       /* chunky faceted sabre: a long lozenge with a bright core */
+        float r0 = 30.0f, r1 = R + 14.0f, rm = r0 + (r1 - r0) * 0.55f, hw = 9.0f;
+        gfx_glowline(sx + cx * r0, sy + cy * r0, sx + cx * r1, sy + cy * r1, 34.0f, col_a(COL_B, 0.85f));
+        gfx_quad4(sx + cx * r0, sy + cy * r0, col_a(COL_B, 0.9f), sx + cx * rm + px_ * hw, sy + cy * rm + py_ * hw, col_a(0x9CFFE0FFu, 0.95f),
+                  sx + cx * r1, sy + cy * r1, WHITE, sx + cx * rm - px_ * hw, sy + cy * rm - py_ * hw, col_a(0x9CFFE0FFu, 0.95f));
+        gfx_quad4(sx + cx * (r0 + 8), sy + cy * (r0 + 8), WHITE, sx + cx * rm + px_ * 3.5f, sy + cy * rm + py_ * 3.5f, WHITE,
+                  sx + cx * (r1 - 4), sy + cy * (r1 - 4), WHITE, sx + cx * rm - px_ * 3.5f, sy + cy * rm - py_ * 3.5f, WHITE);
+        gfx_glow_cheap(sx + cx * (R + 8.0f), sy + cy * (R + 8.0f), 34.0f, col_a(WHITE, 0.8f));
     }
     gfx_blend(BL_ALPHA);
 }
@@ -318,8 +406,8 @@ static void draw_lance(const Game *g)
     gfx_blend(BL_ADD);
     if (g->lance_charge > 0) {
         float p = 1.0f - g->lance_charge / 0.3f;
-        float nx = sx + (float)g->face * 26.0f;
-        gfx_glow(nx, sy, 20.0f + 50.0f * p, col_a(col_hsv(g->time * 3.0f, 0.5f, 1.0f, 255), 0.5f + 0.4f * p));
+        float nx = sx + (float)g->face * 42.0f;
+        gfx_glow(nx, sy, 26.0f + 64.0f * p, col_a(col_hsv(g->time * 3.0f, 0.5f, 1.0f, 255), 0.5f + 0.4f * p));
         gfx_ring(nx, sy, 70.0f * (1.0f - p) + 8.0f, 3.0f, 24, 0, col_a(COL_Y, p));
         gfx_ring(nx, sy, 40.0f * (1.0f - p) + 4.0f, 2.0f, 4, g->time * 6.0f, col_a(WHITE, p));
     }
@@ -327,7 +415,7 @@ static void draw_lance(const Game *g)
         float lt = g->lance_t / 0.5f;                     /* 1 -> 0 */
         float wmul = lt > 0.85f ? (1.0f - lt) / 0.15f * 1.4f : sqrtf(lt) * (1.0f + 0.12f * sinf(g->time * 70.0f));
         float w = LANCE_W * wmul;
-        float x0 = sx + (float)g->lance_dir * 22.0f, x1 = x0 + (float)g->lance_dir * LANCE_LEN;
+        float x0 = sx + (float)g->lance_dir * 40.0f, x1 = x0 + (float)g->lance_dir * LANCE_LEN;
         uint32_t hue = col_hsv(g->time * 1.5f, 0.6f, 1.0f, 255);
         gfx_glowline(x0, sy, x1, sy, w * 3.2f, col_a(0xFF4FD8FFu, 0.22f * lt + 0.08f));
         gfx_glowline(x0, sy, x1, sy, w * 1.8f, col_a(hue, 0.45f));
@@ -614,17 +702,31 @@ static void draw_projectiles(const Game *g)
         if (!b->alive) continue;
         float sx = sxof(g, b->x);
         if (!on_screen(sx, b->y, 40)) continue;
-        gfx_glow_cheap(sx, b->y, 34.0f, col_a(COL_A, 0.16f));
-        gfx_capsule(sx, b->y, b->vx, b->vy, 40.0f, 13.0f, col_a(0xFF8A2AFFu, 0.6f));
-        gfx_capsule(sx, b->y, b->vx, b->vy, 26.0f, 5.0f, WHITE);
+        gfx_glow_cheap(sx, b->y, 48.0f, col_a(COL_A, 0.22f));
+        gfx_capsule(sx, b->y, b->vx, b->vy, 56.0f, 22.0f, col_a(0xFF8A2AFFu, 0.55f));
     }
+    gfx_blend(BL_ALPHA);
+    for (int i = 0; i < MAX_PB; i++) {                    /* solid low-poly slug: gold hex prism with a white-hot core */
+        const Bolt *b = &g->pb[i];
+        if (!b->alive) continue;
+        float sx = sxof(g, b->x);
+        if (!on_screen(sx, b->y, 40)) continue;
+        Xf t = xf(sx, b->y, atan2f(b->vy, b->vx), 1, 1);
+        xquad(&t, -16, -6, 6, -6, 6, 0, -16, 0, 0xFFE15AFFu);
+        xquad(&t, -16, 0, 6, 0, 6, 6, -16, 6, 0xFFA21EFFu);
+        xtri(&t, 6, -6, 16, 0, 6, 0, 0xFFF4C0FFu);
+        xtri(&t, 6, 0, 16, 0, 6, 6, 0xFFC23DFFu);
+        xtri(&t, -16, -6, -22, 0, -16, 6, 0xFF7A20FFu);
+        xquad(&t, -12, -2.5f, 10, -2.5f, 10, 2.5f, -12, 2.5f, WHITE);
+    }
+    gfx_blend(BL_ADD);
     for (int i = 0; i < MAX_MS; i++) {
         const Missile *m = &g->ms[i];
         if (!m->alive) continue;
         float sx = sxof(g, m->x);
         if (!on_screen(sx, m->y, 40)) continue;
-        gfx_glow_cheap(sx, m->y, 28.0f, col_a(COL_X, 0.5f));
-        gfx_capsule(sx, m->y, m->vx, m->vy, 18.0f, 8.0f, col_a(0xFFD15CFFu, 0.9f));
+        gfx_glow_cheap(sx, m->y, 40.0f, col_a(COL_X, 0.55f));
+        gfx_capsule(sx, m->y, m->vx, m->vy, 28.0f, 13.0f, col_a(0xFFD15CFFu, 0.9f));
     }
     gfx_blend(BL_ALPHA);
     for (int i = 0; i < MAX_MS; i++) {
@@ -632,9 +734,13 @@ static void draw_projectiles(const Game *g)
         if (!m->alive) continue;
         float sx = sxof(g, m->x);
         if (!on_screen(sx, m->y, 40)) continue;
-        Xf t = xf(sx, m->y, atan2f(m->vy, m->vx), 1, 1);
-        xtri(&t, 9, 0, -5, -4, -5, 4, COL_X);
-        xtri(&t, 9, 0, -5, -4, -2, 0, 0xFFB0D8FFu);
+        Xf t = xf(sx, m->y, atan2f(m->vy, m->vx), 1, 1);   /* chunky rocket: body, nose cone, fins */
+        xquad(&t, -9, -4.5f, 6, -4.5f, 6, 0, -9, 0, 0xFF7ABCFFu);
+        xquad(&t, -9, 0, 6, 0, 6, 4.5f, -9, 4.5f, 0xD82E7EFFu);
+        xtri(&t, 6, -4.5f, 15, 0, 6, 0, WHITE);
+        xtri(&t, 6, 0, 15, 0, 6, 4.5f, 0xFFC8E4FFu);
+        xtri(&t, -9, -4.5f, -14, -9, -4, -4.5f, 0xFFD15CFFu);
+        xtri(&t, -9, 4.5f, -4, 4.5f, -14, 9, 0xE5A020FFu);
     }
 }
 
@@ -646,8 +752,8 @@ static void draw_ebullets(const Game *g)
         if (!b->alive) continue;
         float sx = sxof(g, b->x);
         if (!on_screen(sx, b->y, 30)) continue;
-        float r = b->big ? 9.0f : 7.0f;
-        gfx_glow_cheap(sx, b->y, r * 3.2f, col_a(0xFF3F9AFFu, 0.45f));
+        float r = b->big ? 12.0f : 9.5f;
+        gfx_glow_cheap(sx, b->y, r * 3.2f, col_a(0xFF3F9AFFu, 0.5f));
         gfx_capsule(sx, b->y, b->vx, b->vy, r * 2.2f, r * 1.6f, col_a(0xFF5FA8FFu, 0.7f));
     }
     gfx_blend(BL_ALPHA);
@@ -656,7 +762,7 @@ static void draw_ebullets(const Game *g)
         if (!b->alive) continue;
         float sx = sxof(g, b->x);
         if (!on_screen(sx, b->y, 30)) continue;
-        float r = b->big ? 7.0f : 5.5f;
+        float r = b->big ? 9.5f : 7.5f;
         float a = atan2f(b->vy, b->vx);
         Xf t = xf(sx, b->y, a, 1, 1);
         xquad(&t, -r * 1.4f, -r * 0.8f, r * 0.6f, -r, r * 0.6f, r, -r * 1.4f, r * 0.8f, 0xFF4F9AFFu);   /* pink pill */
@@ -905,7 +1011,7 @@ static void draw_hud(const Game *g)
     /* ---- bottom left: ship badge, lives, shields ---- */
     float bx = 50.0f, by = VH - 46.0f;
     hex_badge(bx, by, 26.0f, 0x2A1238E0u, 0xFFFFFFE0u);
-    Xf t = xf(bx, by, 0, 0.8f, 0.8f);
+    Xf t = xf(bx + 1.0f, by + 3.0f, 0, 0.5f, 0.5f);
     ship_model(&t);
     snprintf(buf, sizeof buf, "x%d", g->lives);
     shadow_text(buf, bx + 36, by - 24, 2.5f, WHITE, 0);
@@ -999,7 +1105,7 @@ static void draw_boss_card(const Game *g)
     gfx_rect(0, 300, VW, 2, col_a(0xFF4FD8FFu, a));
     gfx_rect(0, 348, VW, 2, col_a(0xFF4FD8FFu, a));
     shadow_text("HEXACORE", x, 308, 4.0f, col_a(0xFF9BE8FFu, a), 1);
-    shadow_text("GUARDIAN OF THE CAVERNS", x, 336, 1.5f, col_a(WHITE, a), 1);
+    shadow_text(g->L->boss_sub ? g->L->boss_sub : "GUARDIAN", x, 336, 1.5f, col_a(WHITE, a), 1);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1143,6 +1249,175 @@ static void draw_clear(const Game *g)
     }
 }
 
+
+/* ------------------------------------------------------------------ */
+/* skyway background: dusk sky, mountains, city, and a lamp-lined track */
+/* ------------------------------------------------------------------ */
+#define SKY_HZ   246.0f      /* horizon */
+#define TRACK_FAR  296.0f    /* far edge of the track (depth 4) */
+#define TRACK_NEAR 446.0f    /* near edge: the ship's floor (depth 1) */
+
+static float posmod(float x, float p) { x = fmodf(x, p); return x < 0 ? x + p : x; }
+static float depth_y(float z) { return SKY_HZ + (TRACK_NEAR - SKY_HZ) / z; }
+
+static void ellipse(float cx, float cy, float rx, float ry, uint32_t cin, uint32_t cout)
+{
+    static const float K[11][2] = { {1,0},{0.809f,0.588f},{0.309f,0.951f},{-0.309f,0.951f},{-0.809f,0.588f},{-1,0},
+                                    {-0.809f,-0.588f},{-0.309f,-0.951f},{0.309f,-0.951f},{0.809f,-0.588f},{1,0} };
+    for (int i = 0; i < 10; i++)
+        gfx_tri(cx, cy, cin, cx + K[i][0] * rx, cy + K[i][1] * ry, cout, cx + K[i + 1][0] * rx, cy + K[i + 1][1] * ry, cout);
+}
+
+/* a row of track lamps at depth z: flattened glowing yellow ovals, like runway lights */
+static void lamp_row(const Game *g, float z, float spacing, float y, float rx, float ry, int glow)
+{
+    const LevelDef *L = g->L;
+    float sp = spacing / z, off = posmod(-g->scroll / z, sp);
+    float pulse = 0.85f + 0.15f * sinf(g->time * 3.0f);
+    for (float x = off - sp; x < VW + sp; x += sp) {
+        if (glow) {
+            gfx_blend(BL_ADD);
+            gfx_glow_cheap(x, y, rx * 2.6f, col_a(L->lamp, 0.35f * pulse));
+            gfx_blend(BL_ALPHA);
+        }
+        ellipse(x, y + ry * 0.35f, rx * 1.08f, ry * 1.15f, 0x8A5A10FFu, 0x8A5A10FFu);     /* bezel */
+        ellipse(x, y, rx, ry, col_mix(L->lamp, WHITE, 0.55f), L->lamp);
+    }
+}
+
+static void draw_skyway(const Game *g)
+{
+    const LevelDef *L = g->L;
+    float s = g->scroll;
+
+    /* sky */
+    gfx_rect_v(-40, -40, VW + 80, 170, L->sky_top, L->sky_mid);
+    gfx_rect_v(-40, 130, VW + 80, SKY_HZ - 130 + 1, L->sky_mid, L->horizon);
+
+    /* stars, high up */
+    gfx_blend(BL_ADD);
+    for (int i = 0; i < 40; i++) {
+        uint32_t h = 0x57A2u + (uint32_t)i * 7919u;
+        float x = posmod(hashf(h) * 1400.0f - s * 0.01f, 1400.0f) - 260.0f, y = 8.0f + hashf(h + 1) * 110.0f;
+        float tw = 0.3f + 0.7f * fabsf(sinf(g->time * (0.8f + hashf(h + 2) * 2.0f) + (float)i));
+        float r = 1.0f + hashf(h + 3) * 1.6f;
+        gfx_rect(x - r, y - r * 0.3f, r * 2.0f, r * 0.6f, col_a(WHITE, 0.6f * tw));
+        gfx_rect(x - r * 0.3f, y - r, r * 0.6f, r * 2.0f, col_a(WHITE, 0.6f * tw));
+    }
+    /* glow along the horizon */
+    gfx_rect_v(-40, SKY_HZ - 90, VW + 80, 90, col_a(L->cloud, 0.0f), col_a(L->cloud, 0.35f));
+    gfx_blend(BL_ALPHA);
+
+    /* low-poly cloud streaks */
+    for (int i = 0; i < 9; i++) {
+        uint32_t h = 0xC10Du + (uint32_t)i * 4451u;
+        float P = 1900.0f, w = 120.0f + hashf(h) * 200.0f;
+        float x = posmod(hashf(h + 1) * P - s * (0.025f + 0.02f * hashf(h + 4)), P) - 300.0f;
+        float y = 120.0f + hashf(h + 2) * 100.0f, th = 5.0f + hashf(h + 3) * 8.0f;
+        uint32_t c = col_a(col_mix(L->cloud, L->horizon, 0.35f), 0.35f + 0.25f * hashf(h + 5));
+        gfx_quad4(x, y, c & 0xFFFFFF00u, x + w * 0.2f, y - th, c, x + w * 0.85f, y - th * 0.7f, c, x + w, y, c & 0xFFFFFF00u);
+        gfx_quad4(x, y, c & 0xFFFFFF00u, x + w, y, c & 0xFFFFFF00u, x + w * 0.8f, y + th * 0.5f, col_a(c, 0.5f), x + w * 0.15f, y + th * 0.4f, col_a(c, 0.5f));
+    }
+
+    /* faceted mountains */
+    {
+        const int N = 34;
+        const float step = 38.0f, P = step * (float)N;
+        float o = posmod(s * 0.05f, P);
+        for (int i = 0; i < 2 * N + 2; i++) {
+            float x0 = (float)i * step - o, x1 = x0 + step;
+            if (x1 < -step || x0 > VW + step) continue;
+            float h0 = 14.0f + hashf(0x30u + (uint32_t)(i % N)) * 58.0f, h1 = 14.0f + hashf(0x30u + (uint32_t)((i + 1) % N)) * 58.0f;
+            float y0 = SKY_HZ - h0, y1 = SKY_HZ - h1, mx = (x0 + x1) * 0.5f, my = (y0 + y1) * 0.5f + 10.0f;
+            uint32_t lit = h1 > h0 ? L->mountain : L->mountain_hi;
+            gfx_tri1(x0, y0, x1, y1, mx, my, lit);
+            gfx_quad4(x0, y0, L->mountain, mx, my, col_mix(L->mountain, L->city, 0.3f), x1, y1, L->mountain, x1, SKY_HZ, L->city);
+            gfx_tri1(x0, y0, x1, SKY_HZ, x0, SKY_HZ, L->mountain);
+        }
+    }
+
+    /* city skyline with lit windows and blinking rooftop beacons */
+    {
+        const int N = 46;
+        const float P = 1500.0f;
+        float wsum = 0, ws[46];
+        for (int i = 0; i < N; i++) { ws[i] = 14.0f + hashf(0xB11Du + (uint32_t)i * 31u) * 34.0f; wsum += ws[i]; }
+        float k = P / wsum, o = posmod(s * 0.13f, P);
+        for (int rep = 0; rep < 2; rep++) {
+            float x = (float)rep * P - o;
+            for (int i = 0; i < N; i++) {
+                float w = ws[i] * k, xa = x;
+                x += w;
+                if (xa > VW + 10 || xa + w < -10) continue;
+                uint32_t h = 0xC17Bu + (uint32_t)i * 97u;
+                float bh = 12.0f + hashf(h) * hashf(h + 1) * 78.0f, top = SKY_HZ - bh;
+                float inset = w * 0.12f;
+                gfx_rect(xa + inset, top, w - inset * 2.0f, bh + 1.0f, L->city);
+                gfx_rect(xa + inset, top, (w - inset * 2.0f) * 0.3f, bh + 1.0f, L->city_hi);
+                if (hashf(h + 2) > 0.55f) gfx_tri1(xa + inset, top, xa + w - inset, top, xa + w * 0.5f, top - 10.0f, L->city);
+                for (float wy = top + 5.0f; wy < SKY_HZ - 4.0f; wy += 6.0f)
+                    for (float wx = xa + inset + 3.0f; wx < xa + w - inset - 3.0f; wx += 5.0f) {
+                        uint32_t wh = hash32((uint32_t)(wx * 7.0f) ^ ((uint32_t)wy * 131u) ^ h);
+                        if ((wh & 7) < 3) gfx_rect(wx, wy, 2.0f, 2.0f, col_a((wh & 64) ? L->window : L->cloud, 0.75f));
+                    }
+                if (bh > 55.0f && fmodf(g->time + hashf(h + 3) * 2.0f, 2.0f) < 1.0f) {
+                    gfx_rect(xa + w * 0.5f - 1.5f, top - 4.0f, 3.0f, 3.0f, 0xFF3048FFu);
+                    gfx_blend(BL_ADD);
+                    gfx_glow_cheap(xa + w * 0.5f, top - 3.0f, 10.0f, 0xFF304890u);
+                    gfx_blend(BL_ALPHA);
+                }
+            }
+        }
+    }
+
+    /* the ground: grass field between horizon and track, with speckles drifting by */
+    gfx_rect_v(-40, SKY_HZ, VW + 80, TRACK_FAR - SKY_HZ, col_mix(L->grass, L->horizon, 0.55f), L->grass);
+    for (int i = 0; i < 160; i++) {
+        uint32_t h = 0x6A55u + (uint32_t)i * 2654435761u;
+        float z = 4.2f + hashf(h) * 14.0f, y = depth_y(z), P = 1700.0f / z * 1.6f;
+        float x = posmod(hashf(h + 1) * P - s / z, P);
+        float a = 0.5f * (1.0f - (z - 4.2f) / 14.0f);
+        for (float xx = x - P; xx < VW + 4.0f; xx += P)
+            if (xx > -4.0f) gfx_rect(xx, y, 6.0f / z * 3.0f, 1.5f, col_a((i & 1) ? L->grass_hi : 0x3A6CD0FFu, a));
+    }
+
+    /* far guard rail + lamps */
+    gfx_rect(-40, TRACK_FAR - 5.0f, VW + 80, 5.0f, col_mix(L->rail, L->horizon, 0.4f));
+    lamp_row(g, 4.0f, 90.0f, TRACK_FAR - 6.0f, 4.0f, 1.6f, 1);
+
+    /* track surface: perspective bands, fogged into the distance */
+    {
+        static const float ZB[] = {4.0f, 3.3f, 2.7f, 2.2f, 1.8f, 1.5f, 1.25f, 1.0f};
+        for (int k = 0; k < 7; k++) {
+            float ya = depth_y(ZB[k]), yb = depth_y(ZB[k + 1]);
+            float fa = clampf(0.5f - 0.5f / ZB[k], 0, 1), fb = clampf(0.5f - 0.5f / ZB[k + 1], 0, 1);
+            uint32_t base = (k & 1) ? L->track_hi : L->track;
+            gfx_rect_v(-40, ya, VW + 80, yb - ya + 0.5f, col_mix(base, L->horizon, fa), col_mix(base, L->horizon, fb));
+        }
+        /* panel seams converging to the vanishing point (they slide past exactly with the camera) */
+        float S = 80.0f, o = posmod(-s, S), cx = VW * 0.5f;
+        for (float off = o - S * 24.0f; off < S * 24.0f; off += S) {
+            float xn = cx + off, xf = cx + off / 4.0f;
+            if ((xn < -60 && xf < -60) || (xn > VW + 60 && xf > VW + 60)) continue;
+            gfx_quad4(xf - 0.4f, TRACK_FAR, col_a(0xFFFFFFFFu, 0.04f), xf + 0.4f, TRACK_FAR, col_a(0xFFFFFFFFu, 0.04f),
+                      xn + 1.2f, TRACK_NEAR, col_a(0xFFFFFFFFu, 0.16f), xn - 1.2f, TRACK_NEAR, col_a(0xFFFFFFFFu, 0.16f));
+        }
+        /* glowing centre line dashes */
+        float yc = depth_y(1.9f);
+        float sp = 120.0f / 1.9f, o2 = posmod(-s / 1.9f, sp);
+        gfx_blend(BL_ADD);
+        for (float x = o2 - sp; x < VW + sp; x += sp)
+            gfx_quad4(x, yc - 1.5f, col_a(L->cloud, 0.25f), x + sp * 0.45f, yc - 1.5f, col_a(L->cloud, 0.25f),
+                      x + sp * 0.45f + 2.0f, yc + 1.5f, col_a(L->cloud, 0.25f), x + 2.0f, yc + 1.5f, col_a(L->cloud, 0.25f));
+        gfx_blend(BL_ALPHA);
+    }
+
+    /* near barrier (the floor) with big lamps */
+    gfx_rect_v(-40, TRACK_NEAR, VW + 80, VH - TRACK_NEAR + 40, L->rail, col_mix(L->rail, 0x000000FFu, 0.5f));
+    gfx_rect(-40, TRACK_NEAR, VW + 80, 2.0f, col_mix(L->rail, WHITE, 0.45f));
+    lamp_row(g, 1.0f, 90.0f, TRACK_NEAR + 9.0f, 17.0f, 5.5f, 1);
+}
+
 /* ------------------------------------------------------------------ */
 void game_render(const Game *g)
 {
@@ -1157,11 +1432,15 @@ void game_render(const Game *g)
     gfx_view(ox, oy, 1.0f + g->zoom_kick);
 
     /* background */
-    gfx_rect_v(-40, -40, VW + 80, VH + 80, L->sky_top, L->sky_bot);
-    draw_blob_layer(g, 0.3f, 10, 0xB10Bu, 70, 140, 0, L->blob, L->blob_hi);
-    draw_glyph_layer(g);
-    draw_blob_layer(g, 0.65f, 14, 0x51DEu, 60, 120, 1, col_mix(L->blob, L->sky_bot, 0.2f), col_mix(L->blob_hi, L->terr_lo, 0.18f));
-    draw_terrain(g);
+    if (L->style == STYLE_SKYWAY) {
+        draw_skyway(g);
+    } else {
+        gfx_rect_v(-40, -40, VW + 80, VH + 80, L->sky_top, L->sky_bot);
+        draw_blob_layer(g, 0.3f, 10, 0xB10Bu, 70, 140, 0, L->blob, L->blob_hi);
+        draw_glyph_layer(g);
+        draw_blob_layer(g, 0.65f, 14, 0x51DEu, 60, 120, 1, col_mix(L->blob, L->sky_bot, 0.2f), col_mix(L->blob_hi, L->terr_lo, 0.18f));
+        draw_terrain(g);
+    }
 
     if (g->state != ST_TITLE) {
         draw_crystals(g);
@@ -1177,11 +1456,6 @@ void game_render(const Game *g)
         draw_particles(g, 1);
         gfx_blend(BL_ALPHA);
         draw_rings(g);
-    } else {
-        gfx_blend(BL_ADD);
-        draw_particles(g, 1);
-        gfx_blend(BL_ALPHA);
-        draw_player(g);
     }
 
     gfx_view_reset();
@@ -1201,6 +1475,12 @@ void game_render(const Game *g)
     switch (g->state) {
     case ST_TITLE:
         draw_title(g);
+        gfx_view(ox, oy, 1.0f);                 /* the ship flies over the title card, at full brightness */
+        gfx_blend(BL_ADD);
+        draw_particles(g, 1);
+        gfx_blend(BL_ALPHA);
+        draw_player(g);
+        gfx_view_reset();
         break;
     case ST_PLAY:
     case ST_PAUSE:

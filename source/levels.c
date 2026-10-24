@@ -1,7 +1,8 @@
 /*
  * NOVA PRISM - level definitions.
  *
- * To add a level, copy the LEVEL 1 block, change the name / colours / terrain seed and write its waves,
+ * To add a level, copy the LEVEL 1 block, change the name / colours / terrain seed and write its waves
+ * (style: STYLE_SKYWAY = open sky over a racetrack, STYLE_CAVE = rocky crystal cave with a bumpy ceiling and floor),
  * then bump nothing else: NUM_LEVELS is computed automatically. Each wave is a list of spawn groups:
  *     { type, count, side, delay }
  * type  : EN_SHARD (blue drills that chase you), EN_ZIP (fast green swoopers, come in flocks),
@@ -18,15 +19,23 @@
 const LevelDef LEVELS[] = {
     /* ---------------------------------------------------------------- LEVEL 1 */
     {
-        .name    = "CRYSTAL CAVERNS",
+        .name    = "NEON SKYWAY",
+        .boss_sub = "GUARDIAN OF THE SKYWAY",
+        .style   = STYLE_SKYWAY,
         .seed    = 0x5EED1234u,
         .width   = 3416.0f,             /* four screens around */
         .nterr   = 28,
         .rough   = 0.75f,
-        .sky_top = C(38, 8, 58),   .sky_bot = C(62, 14, 78),
+        .sky_top = C(66, 10, 94),  .sky_bot = C(62, 14, 78),
         .blob    = C(30, 6, 46),   .blob_hi = C(48, 14, 70),
         .terr    = C(232, 46, 110), .terr_hi = C(255, 104, 150), .terr_lo = C(170, 26, 92),
         .glyph   = C(84, 102, 230),
+        /* skyway look: magenta dusk sky, violet mountains, a city skyline, and a lamp-lined track */
+        .sky_mid = C(140, 30, 140), .horizon = C(196, 86, 178), .cloud = C(255, 150, 214),
+        .mountain = C(66, 40, 128), .mountain_hi = C(98, 62, 162),
+        .city    = C(40, 26, 92),  .city_hi = C(62, 42, 124), .window = C(255, 214, 110),
+        .grass   = C(24, 92, 84),  .grass_hi = C(70, 170, 120),
+        .track   = C(92, 86, 116), .track_hi = C(108, 102, 134), .rail = C(46, 36, 82), .lamp = C(255, 214, 64),
         .nwaves  = 10,
         .waves = {
             /* 1: a gentle warm-up from both sides */
