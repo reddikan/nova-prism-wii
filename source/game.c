@@ -363,12 +363,12 @@ static void add_score(Game *g, long pts, float x, float y, uint32_t col)
 static void announce_combo(Game *g)
 {
     static const int   MS[]   = {10, 25, 50, 100, 200};
-    static const char *TXT[]  = {"NICE!", "GREAT!", "AMAZING!", "INCREDIBLE!", "UNSTOPPABLE!"};
+    static const char *TXT[]  = {"Nice!", "Great!", "Amazing!", "Incredible!", "Unstoppable!"};
     for (int i = 4; i >= 0; i--) {
         if (g->chain >= MS[i] && g->milestone < MS[i]) {
             g->milestone = MS[i];
             char buf[24];
-            snprintf(buf, sizeof buf, "%s %d CHAIN", TXT[i], MS[i]);
+            snprintf(buf, sizeof buf, "%s %d in a row", TXT[i], MS[i]);
             popup(g, VW * 0.5f, 150.0f, buf, col_hsv(0.08f * (float)i + 0.85f, 0.6f, 1.0f, 255), 1);
             sfxp(g, SFX_COMBO, 128 + 12 * i);
             ring(g, g->px, g->py, 260.0f, 0.6f, 14.0f, col_hsv(0.1f * (float)i, 0.7f, 1.0f, 255));
@@ -462,7 +462,7 @@ static void hurt_player(Game *g)
     g->chain = 0; g->chain_t = 0; g->milestone = 0;
     if (g->mult > 1.0f) {
         g->mult = 1.0f + (g->mult - 1.0f) * 0.5f;
-        popup(g, sxof(g, g->px), g->py - 40.0f, "MULTIPLIER HALVED", 0xFF5070FFu, 0);
+        popup(g, sxof(g, g->px), g->py - 40.0f, "multiplier halved!", 0xFF5070FFu, 0);
     }
     g->shields--;
     flash(g, 0.6f, 1.0f, 0.15f, 0.25f);
@@ -518,7 +518,7 @@ static void out_of_energy(Game *g, int w)
     if (g->empty_t > 0) return;
     g->empty_t = 0.4f; g->empty_wpn = (float)w;
     sfx(g, SFX_EMPTY);
-    popup(g, sxof(g, g->px), g->py - 34.0f, "NO ENERGY", 0xFF8090FFu, 0);
+    popup(g, sxof(g, g->px), g->py - 34.0f, "no energy!", 0xFF8090FFu, 0);
 }
 
 static void fire_blaster(Game *g)
@@ -546,7 +546,7 @@ static void fire_blaster(Game *g)
     if (g->heat >= 1.0f) {
         g->heat = 1.0f; g->overheat = 1;
         sfx(g, SFX_OVERHEAT);
-        popup(g, sxof(g, g->px), g->py - 34.0f, "OVERHEAT!", 0xFF7040FFu, 0);
+        popup(g, sxof(g, g->px), g->py - 34.0f, "overheat!", 0xFF7040FFu, 0);
         for (int k = 0; k < 10; k++)
             newpart(g, P_SMOKE, g->px, g->py, frange(g, -60, 60), frange(g, -160, -60), frange(g, 0.5f, 0.9f), frange(g, 8, 14), 0xFFFFFF90u);
     }
@@ -833,7 +833,7 @@ static void update_boss(Game *g, int i, float dt)
         e->idx = 1;
         e->attack = 0;
         e->cd = 1.5f;
-        popup(g, VW * 0.5f, 160.0f, "OVERDRIVE!", 0xFF4FD8FFu, 1);
+        popup(g, VW * 0.5f, 160.0f, "GRRR!!", 0xFF4FD8FFu, 1);
         sfx(g, SFX_BOSS);
         ring(g, e->x, e->y, 300.0f, 0.8f, 20.0f, 0xFF4FD8FFu);
         flash(g, 0.5f, 1.0f, 0.3f, 0.8f);
@@ -1193,7 +1193,7 @@ static void update_pickups(Game *g, float dt)
                 if (g->shields < SHIELDS_MAX) g->shields++;
                 else g->score += (long)(500.0f * g->mult);
                 sfx(g, SFX_POWERUP);
-                popup(g, sxof(g, g->px), g->py - 36.0f, "+SHIELD", 0x6BFF8AFFu, 0);
+                popup(g, sxof(g, g->px), g->py - 36.0f, "+1 heart", 0x6BFF8AFFu, 0);
                 ring(g, g->px, g->py, 70.0f, 0.35f, 6.0f, 0x6BFF8AFFu);
             }
         }
@@ -1241,11 +1241,11 @@ static void start_wave(Game *g, int n)
     g->banner_t = 2.4f;
     if (boss) {
         snprintf(g->banner, sizeof g->banner, "WARNING");
-        snprintf(g->sub, sizeof g->sub, "MASSIVE ENERGY SIGNATURE");
+        snprintf(g->sub, sizeof g->sub, "something BIG is coming...");
         sfx(g, SFX_BOSS);
     } else {
-        snprintf(g->banner, sizeof g->banner, "WAVE %d", n + 1);
-        snprintf(g->sub, sizeof g->sub, n + 1 == g->L->nwaves - 1 ? "FINAL WAVE BEFORE THE CORE" : "INCOMING");
+        snprintf(g->banner, sizeof g->banner, "Wave %d", n + 1);
+        snprintf(g->sub, sizeof g->sub, n + 1 == g->L->nwaves - 1 ? "last wave before the boss!" : "here they come!");
         sfx(g, SFX_WAVE);
     }
 }
@@ -1265,7 +1265,7 @@ static void wave_complete(Game *g)
         sfx(g, SFX_PERFECT);
         confetti(g, g->px, g->py, 40, 500.0f);
     } else if (!boss_wave) {
-        popup(g, VW * 0.5f, 200.0f, "WAVE CLEAR", 0x9CFFD8FFu, 1);
+        popup(g, VW * 0.5f, 200.0f, "wave clear!", 0x9CFFD8FFu, 1);
         sfx(g, SFX_CLEAR);
     }
     g->wave++;
@@ -1273,7 +1273,7 @@ static void wave_complete(Game *g)
         g->level_done = 1;
         g->state_t = 0;
         g->banner_t = 3.0f;
-        snprintf(g->banner, sizeof g->banner, "LEVEL CLEAR");
+        snprintf(g->banner, sizeof g->banner, "Level clear!");
         snprintf(g->sub, sizeof g->sub, "%s", g->L->name);
         sfx(g, SFX_CLEAR);
     } else {
@@ -1467,7 +1467,7 @@ void game_start(Game *g, int level)
     g->intro_t = 2.6f;
     g->inv_t = 2.6f;
     g->banner_t = 2.6f;
-    snprintf(g->banner, sizeof g->banner, "LEVEL %d", level + 1);
+    snprintf(g->banner, sizeof g->banner, "Level %d", level + 1);
     snprintf(g->sub, sizeof g->sub, "%s", g->L->name);
     g->fade = 1.0f;
     sfx(g, SFX_START);
@@ -1486,7 +1486,7 @@ void game_update(Game *g, const Input *in, float dt)
         g->camx = wrapx(g, g->camx + dt * 90.0f);
         g->scroll += dt * 90.0f;
         g->px = wrapx(g, g->camx - 120.0f + sinf(g->time * 0.8f) * 60.0f);
-        g->py = 342.0f + sinf(g->time * 1.3f) * 12.0f;
+        g->py = 312.0f + sinf(g->time * 1.3f) * 10.0f;
         g->face = 1; g->alive = 1;
         if (NUM_LEVELS > 1 && (pressed & (BTN_LEFT | BTN_RIGHT))) {
             g->level = (g->level + ((pressed & BTN_RIGHT) ? 1 : NUM_LEVELS - 1)) % NUM_LEVELS;

@@ -1,9 +1,10 @@
 # NOVA PRISM  (Wii homebrew)
 
-A bright, low-poly side-view space shooter for the Nintendo Wii, played with the **Wii Classic Controller**.
-Everything is drawn by the Wii's GPU as flat-shaded triangles with additive glow, at a locked **60 fps** in **16:9**.
+A side-view space shooter for the Nintendo Wii, played with the **Wii Classic Controller**, that looks like a kid
+doodled it on a page of school notebook paper: crayon-coloured rockets and monsters, wobbly felt-pen outlines,
+handwriting everywhere. The page "boils" like stop-motion animation while the action stays a smooth **60 fps** in **16:9**.
 
-Race along the wrap-around **Neon Skyway** in your blue-and-gold jet, fight enemies coming from both sides, keep your
+Fly your crayon rocket across the wrap-around **Notebook Nebula**, fight enemies coming from both sides, keep your
 multiplier climbing, and take down the **Hexacore**.
 
 ## Controls (Classic Controller)
@@ -20,20 +21,21 @@ multiplier climbing, and take down the **Hexacore**.
 | - | switch between full 16:9 and a letterboxed picture for a 4:3 TV |
 | HOME | quit |
 
-B, X and Y use **energy** (the yellow bar). Destroyed enemies drop **yellow crystals** - fly near them and they
-get pulled in to refill it. Green hexagons restore a shield pip.
+B, X and Y use **energy** (the yellow bar). Destroyed enemies drop **yellow diamonds** - fly near them and they
+get pulled in to refill it. Red hearts give you back a heart (your shields).
 
 **Scoring:** every kill raises your **multiplier** (up to 30x); getting hit halves it. Kills within a couple of
 seconds form a **chain** (big chains pay a bonus), and clearing a wave without getting hit is a **PERFECT** bonus.
 Your rank (S / A / B / C) is shown at the end of the level.
 
-## Level 1: Neon Skyway
+## Level 1: Notebook Nebula
 
-A magenta dusk sky over a city skyline, with a lamp-lined racetrack below you.
+A plain ruled page with faint pencil stars, planets and a smiley moon doodled in the margins of space.
 
-10 waves: blue **Shards** that hunt you down (and lunge when they flash red), green **Zip** flocks,
-purple **Spores** that fire bullet fans, segmented **Serpents** that chain-explode when you kill the head,
-and the boss, the **Hexacore**, with six orbiting crystal shields and an overdrive phase at half health.
+10 waves: blue spiky **Shards** that hunt you down (they shake and shout "!" before they lunge), mint **Zip** flocks,
+grumpy red **Spores** that spit bullet fans, wiggly **Serpent** caterpillars that pop segment by segment when you
+get the head, and the boss, the **Hexacore**, a furious yellow hexagon with six crystal shields that starts steaming
+mad at half health.
 
 ## Build it (no toolchain needed on your computer)
 
@@ -83,8 +85,14 @@ level picker automatically once there is more than one level, and clearing a lev
 source/game.c        rules: ship, weapons, enemies, boss, waves, scoring, menus
 source/draw.c        all rendering (low-poly models, glow, particles, HUD, screens)
 source/levels.c      level definitions (add new levels here)
-source/gfx.c/.h      triangle-list builder + pixel font (platform independent)
+source/gfx.c/.h      triangle-list builder, crayon/paper textures, wobbly pen lines, handwriting
+source/font_data.h   the handwriting font atlas (made by tools/make_font.py)
 source/audio.c/.h    synthesized sound effects (no audio files)
 source/main.c        the Wii layer: GX graphics, Classic Controller, ASND audio
 tools/test.c         native test harness, software rasterizer, bots, preview recorder
 ```
+
+## Credits
+
+Handwriting font: **Gloria Hallelujah** by Kimberly Geswein, used under the SIL Open Font License 1.1
+(`tools/fonts/OFL.txt`).

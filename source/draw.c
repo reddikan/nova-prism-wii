@@ -1,6 +1,11 @@
 /*
- * NOVA PRISM - rendering. Everything is built from flat-shaded low-poly
- * triangles plus additive glow, drawn into the gfx triangle list.
+ * NOVA PRISM - rendering, "notebook doodle" edition.
+ *
+ * Everything looks like a kid drew it with crayons and a felt pen on a page of school notebook paper:
+ * crayon-scribbled fills, wobbly navy outlines, handwriting, no lighting at all.
+ *
+ * The background "boils" like stop-motion (its outlines are redrawn, its scribbles shift and the
+ * paper nudges a hair BOIL_FPS times a second) while everything you play with moves smoothly at 60 fps.
  */
 #include "game_int.h"
 
@@ -9,322 +14,261 @@
 
 enum { P_SPARK, P_GLOW, P_DEBRIS, P_SMOKE, P_CONF, P_STAR };   /* must match game.c */
 
-#define WHITE 0xFFFFFFFFu
+#define BOIL_FPS 8.0f
+
+/* the kid's pencil case */
+#define INK      0x22307CFFu    /* navy felt pen */
+#define PAPER    0xF4EFE0FFu
+#define PAPER_DK 0xD9CDB0FFu
+#define RULE     0x9DB9E2FFu
+#define MARGIN   0xE58A8AFFu
+#define WHITE    0xFFFFFFFFu
+#define C_ORANGE 0xFF9A2AFFu
+#define C_YELLOW 0xFFD23AFFu
+#define C_RED    0xF0483CFFu
+#define C_BLUE   0x3D8CF0FFu
+#define C_BLUE_D 0x2A64C8FFu
+#define C_SKY    0x8FD6FFFFu
+#define C_MINT   0x4CD9A0FFu
+#define C_GREEN  0x8CD84AFFu
+#define C_GREEN_D 0x5DB03AFFu
+#define C_PINK   0xFF6FA8FFu
+#define C_GREY   0x8A8A96FFu
+
+static int   boil;              /* stop-motion frame number for the background */
+static float boil_t;            /* time of the current boil frame */
 
 /* ------------------------------------------------------------------ */
-/* local-space transform for models                                    */
+/* local-space transform for doodles                                    */
 /* ------------------------------------------------------------------ */
-typedef struct { float x, y, c, s, sx, sy, flash, alpha; } Xf;
+typedef struct { float x, y, c, s, sx, sy; } Xf;
 
 static Xf xf(float x, float y, float ang, float sx, float sy)
 {
-    Xf t = { x, y, cosf(ang), sinf(ang), sx, sy, 0.0f, 1.0f };
+    Xf t = { x, y, cosf(ang), sinf(ang), sx, sy };
     return t;
 }
-static inline void xpt(const Xf *t, float lx, float ly, float *ox, float *oy)
+static void xpt(const Xf *t, float lx, float ly, float *ox, float *oy)
 {
     lx *= t->sx; ly *= t->sy;
     *ox = t->x + lx * t->c - ly * t->s;
     *oy = t->y + lx * t->s + ly * t->c;
 }
-static inline uint32_t xcol(const Xf *t, uint32_t c)
-{
-    if (t->flash > 0) c = col_mix(c, WHITE, t->flash);
-    if (t->alpha < 1.0f) c = col_a(c, t->alpha);
-    return c;
-}
-static void xtri(const Xf *t, float ax, float ay, float bx, float by, float cx, float cy, uint32_t col)
-{
-    float x0, y0, x1, y1, x2, y2;
-    xpt(t, ax, ay, &x0, &y0); xpt(t, bx, by, &x1, &y1); xpt(t, cx, cy, &x2, &y2);
-    gfx_tri1(x0, y0, x1, y1, x2, y2, xcol(t, col));
-}
-static void xquad(const Xf *t, float ax, float ay, float bx, float by, float cx, float cy, float dx, float dy, uint32_t col)
-{
-    xtri(t, ax, ay, bx, by, cx, cy, col);
-    xtri(t, ax, ay, cx, cy, dx, dy, col);
-}
-static void xglow(const Xf *t, float lx, float ly, float r, uint32_t c)
+static void xadd(Poly *p, const Xf *t, float lx, float ly)
 {
     float x, y;
     xpt(t, lx, ly, &x, &y);
-    gfx_glow_cheap(x, y, r, c);
+    poly_add(p, x, y);
 }
-
-static float wrapp(float x, float p)          /* into [-p/2, p/2) */
+/* a doodled shape from a list of local points */
+static void shape(const Xf *t, const float (*pts)[2], int n, uint32_t fill, uint32_t ink, float w, uint32_t seed)
 {
-    x -= p * floorf(x / p + 0.5f);
-    return x;
+    Poly p;
+    poly_clear(&p);
+    for (int i = 0; i < n; i++) xadd(&p, t, pts[i][0], pts[i][1]);
+    gfx_uv(t->x, t->y, 128.0f, (float)(seed & 63) / 64.0f, (float)((seed >> 6) & 63) / 64.0f);
+    if (fill & 255) crayon_fill(&p, fill);
+    if (ink & 255) pen_poly(&p, 1, w, ink, seed, 0.9f);
+}
+static void blob(float cx, float cy, float rx, float ry, uint32_t fill, uint32_t ink, float w, uint32_t seed, float lump)
+{
+    Poly p;
+    int n = (int)(fmaxf(rx, ry) * 0.9f) + 9;
+    if (n > 40) n = 40;
+    poly_blob(&p, cx, cy, rx, ry, n, lump, seed);
+    gfx_uv(cx, cy, 128.0f, (float)(seed & 63) / 64.0f, 0.3f);
+    if (fill & 255) crayon_fill(&p, fill);
+    if (ink & 255) pen_poly(&p, 1, w, ink, seed, 0.6f);
+}
+static void xblob(const Xf *t, float lx, float ly, float r, uint32_t fill, uint32_t ink, float w, uint32_t seed)
+{
+    float x, y;
+    xpt(t, lx, ly, &x, &y);
+    blob(x, y, r * fabsf(t->sx), r * fabsf(t->sy), fill, ink, w, seed, 0.06f);
+}
+static void xline(const Xf *t, float ax, float ay, float bx, float by, float w, uint32_t c, uint32_t seed)
+{
+    float x0, y0, x1, y1;
+    xpt(t, ax, ay, &x0, &y0); xpt(t, bx, by, &x1, &y1);
+    pen_line(x0, y0, x1, y1, w, c, seed, 0.5f);
+}
+/* googly eye looking at (lookx, looky) in screen space */
+static void eye(const Xf *t, float lx, float ly, float r, float lookx, float looky, uint32_t seed)
+{
+    float x, y;
+    xpt(t, lx, ly, &x, &y);
+    blob(x, y, r, r, WHITE, INK, 1.4f, seed, 0.05f);
+    float dx = lookx - x, dy = looky - y, d = sqrtf(dx * dx + dy * dy) + 0.01f;
+    float pr = r * 0.48f, m = r - pr - 0.6f;
+    gfx_tex(TEX_SOLID);
+    Poly p;
+    poly_blob(&p, x + dx / d * m, y + dy / d * m, pr, pr, 8, 0.0f, seed);
+    gfx_uv(x, y, 128, 0, 0);
+    crayon_fill(&p, INK);
+    crayon_fill(&p, INK);
 }
 
+static float posmod(float x, float p) { x = fmodf(x, p); return x < 0 ? x + p : x; }
 static int on_screen(float sx, float sy, float r) { return sx > -r && sx < VW + r && sy > -r && sy < VH + r; }
+static float hf(uint32_t x) { return (float)(ihash(x) >> 8) / 16777216.0f; }
 
 /* ------------------------------------------------------------------ */
-/* background                                                           */
+/* background: a plain page of ruled notebook paper with pencil doodles   */
 /* ------------------------------------------------------------------ */
-static void draw_blob_layer(const Game *g, float factor, int n, uint32_t seed, float rmin, float rmax, int edges, uint32_t c, uint32_t chi)
+#define WALL_TOP 34.0f
+#define WALL_BOT 446.0f
+
+static void draw_paper(void)
 {
-    float period = g->W * factor;
-    float cam = g->camx * factor;
-    for (int i = 0; i < n; i++) {
-        uint32_t h = seed + (uint32_t)i * 977u;
-        float u = ((float)i + hashf(h) * 0.7f) * period / (float)n;
-        float r = rmin + hashf(h + 1) * (rmax - rmin);
-        float y;
-        if (edges) y = (i & 1) ? 20.0f + hashf(h + 2) * 110.0f : 460.0f - hashf(h + 2) * 110.0f;
-        else       y = 60.0f + hashf(h + 2) * 360.0f;
-        float sx = VW * 0.5f + wrapp(u - cam, period);
-        if (sx < -r - 10 || sx > VW + r + 10) continue;
-        /* irregular faceted blob, lit from above */
-        const int nv = 7;
-        float px[8], py[8];
-        for (int k = 0; k < nv; k++) {
-            float a = TAU * (float)k / (float)nv + hashf(h + 10 + (uint32_t)k) * 0.5f;
-            float rr = r * (0.75f + 0.25f * hashf(h + 20 + (uint32_t)k));
-            px[k] = sx + cosf(a) * rr; py[k] = y + sinf(a) * rr * 0.85f;
-        }
-        for (int k = 0; k < nv; k++) {
-            int j = (k + 1) % nv;
-            float my = (py[k] + py[j]) * 0.5f - y;
-            float lit = clampf(-my / r * 0.8f + 0.35f, 0, 1);
-            gfx_tri1(sx, y, px[k], py[k], px[j], py[j], col_mix(c, chi, lit * ((k & 1) ? 1.0f : 0.75f)));
-        }
+    gfx_tex(TEX_SOLID);
+    gfx_rect(-30, -30, VW + 60, VH + 60, PAPER);
+    /* paper fibres and soft crumples */
+    gfx_tex(TEX_PAPER);
+    gfx_uv(0, 0, 210.0f, 0, 0);
+    gfx_rect(-30, -30, VW + 60, VH + 60, col_a(PAPER_DK, 0.55f));
+    gfx_tex(TEX_SOLID);
+    static const float CR[5][8] = {
+        {120, -10, 420, -10, 300, 200, 60, 260}, {520, 60, 900, 20, 880, 300, 640, 220},
+        {-20, 300, 260, 250, 380, 500, -20, 500}, {420, 300, 700, 260, 760, 500, 380, 500}, {250, 120, 520, 160, 420, 330, 210, 280} };
+    for (int i = 0; i < 5; i++)
+        gfx_quad4(CR[i][0], CR[i][1], col_a(PAPER_DK, (i & 1) ? 0.10f : 0.0f), CR[i][2], CR[i][3], col_a(PAPER_DK, 0.08f),
+                  CR[i][4], CR[i][5], col_a(PAPER_DK, (i & 1) ? 0.0f : 0.12f), CR[i][6], CR[i][7], col_a(PAPER_DK, 0.05f));
+    /* ruled lines and the red margin */
+    for (float y = 26.0f; y < VH + 10.0f; y += 21.0f) gfx_rect(-30, y, VW + 60, 1.4f, col_a(RULE, 0.85f));
+    gfx_rect(62, -30, 1.6f, VH + 60, col_a(MARGIN, 0.85f));
+    gfx_rect(66, -30, 1.0f, VH + 60, col_a(MARGIN, 0.5f));
+}
+
+static void draw_binder_holes(void)
+{
+    for (float y = 36.0f; y < VH; y += 68.0f) {
+        Poly p;
+        poly_blob(&p, 22, y, 9.5f, 9.5f, 14, 0.05f, (uint32_t)y);
+        gfx_uv(0, 0, 128, 0, 0);
+        crayon_fill(&p, 0x6E5E4EFFu);
+        gfx_tex(TEX_SOLID);
+        gfx_quad4(13, y - 2, 0x3E3226C0u, 31, y - 2, 0x3E3226C0u, 31, y + 2, 0x3E322600u, 13, y + 2, 0x3E322600u);
+        pen_poly(&p, 1, 1.0f, col_a(0x9C8A70FFu, 0.8f), (uint32_t)y, 0.3f);
     }
 }
 
-static void draw_glyph_layer(const Game *g)
+/* little doodles floating in space: stars, plus signs, squares, planets, a smiley moon */
+static void draw_space_doodles(const Game *g, float factor, int n, uint32_t seed0, int big)
 {
-    const float factor = 0.55f;
-    float period = g->W * factor;
-    float cam = g->camx * factor;
-    const int n = 60;
-    uint32_t base = g->L->glyph;
+    float P = 1800.0f, s = g->scroll * factor;
     for (int i = 0; i < n; i++) {
-        uint32_t h = 0xC0FFEEu + (uint32_t)i * 7331u;
-        float u = ((float)i + hashf(h) * 0.9f) * period / (float)n;
-        float y = 30.0f + hashf(h + 1) * 420.0f + sinf(g->time * 0.6f + (float)i) * 6.0f;
-        float sx = VW * 0.5f + wrapp(u - cam, period);
-        if (sx < -20 || sx > VW + 20) continue;
-        float s = 4.0f + hashf(h + 2) * 5.0f;
-        float tw = 0.35f + 0.25f * sinf(g->time * (1.0f + hashf(h + 3) * 2.0f) + (float)i);
-        uint32_t c = col_a(col_mix(base, 0x2A1450FFu, hashf(h + 4) * 0.5f), tw);
-        float rot = g->time * (hashf(h + 5) - 0.5f) + (float)i;
-        int kind = (int)(hashf(h + 6) * 5.0f);
-        float ca = cosf(rot) * s, sa = sinf(rot) * s;
-        switch (kind) {
-        case 0:   /* plus */
-            gfx_line(sx - s, y, sx + s, y, 2.0f, c, c); gfx_line(sx, y - s, sx, y + s, 2.0f, c, c); break;
-        case 1:   /* cross */
-            gfx_line(sx - ca, y - sa, sx + ca, y + sa, 2.0f, c, c); gfx_line(sx + sa, y - ca, sx - sa, y + ca, 2.0f, c, c); break;
-        case 2:   /* diamond outline */
-            gfx_ring(sx, y, s, 2.0f, 4, rot * 0.2f, c); break;
-        case 3:   /* square outline */
-            gfx_ring(sx, y, s, 2.0f, 4, rot * 0.2f + 0.785f, c); break;
-        default:  /* dot */
-            gfx_rect(sx - 2, y - 2, 4, 4, c); break;
-        }
-    }
-}
-
-static void draw_crystal_prism(float x, float y, float ang, float len, float w, uint32_t lt, uint32_t dk, uint32_t tip)
-{
-    Xf t = xf(x, y, ang, 1, 1);
-    float h = w * 0.5f;
-    /* base -> shoulder -> tip, split into a lit and a shaded half */
-    xquad(&t, 0, -h, len * 0.72f, -h, len * 0.72f, 0, 0, 0, lt);
-    xquad(&t, 0, 0, len * 0.72f, 0, len * 0.72f, h, 0, h, dk);
-    xtri(&t, len * 0.72f, -h, len, 0, len * 0.72f, 0, tip);
-    xtri(&t, len * 0.72f, 0, len, 0, len * 0.72f, h, col_mix(dk, tip, 0.3f));
-}
-
-static void draw_terrain(const Game *g)
-{
-    const LevelDef *L = g->L;
-    int   n = L->nterr;
-    float sp = terr_spacing(g);
-    const float B = 16.0f;
-    for (int i = 0; i < n; i++) {
-        float sx0 = sxof(g, (float)i * sp);
-        if (sx0 > VW + 4 || sx0 + sp < -4) continue;
-        float sx1 = sx0 + sp;
-        int   j = (i + 1) % n;
-        float t0 = g->ttop[i], t1 = g->ttop[j], b0 = g->tbot[i], b1 = g->tbot[j];
-        float va = hashf(L->seed + (uint32_t)i * 13u), vb = hashf(L->seed + (uint32_t)i * 17u + 5u);
-        /* ceiling: two big facets, a shadowed bevel and a bright rim */
-        gfx_tri1(sx0, -10, sx1, -10, sx1, t1 - B, col_mix(L->terr, L->terr_lo, va * 0.35f));
-        gfx_tri1(sx0, -10, sx1, t1 - B, sx0, t0 - B, col_mix(L->terr, L->terr_hi, vb * 0.25f));
-        gfx_tri1(sx0, t0 - B, sx1, t1 - B, sx1, t1, L->terr_lo);
-        gfx_tri1(sx0, t0 - B, sx1, t1, sx0, t0, col_mix(L->terr_lo, L->terr, 0.35f));
-        /* floor: lit top bevel */
-        gfx_tri1(sx0, VH + 10, sx1, VH + 10, sx1, b1 + B, col_mix(L->terr, L->terr_lo, vb * 0.35f));
-        gfx_tri1(sx0, VH + 10, sx1, b1 + B, sx0, b0 + B, col_mix(L->terr, L->terr_hi, va * 0.2f));
-        gfx_tri1(sx0, b0, sx1, b1, sx1, b1 + B, L->terr_hi);
-        gfx_tri1(sx0, b0, sx1, b1 + B, sx0, b0 + B, col_mix(L->terr_hi, L->terr, 0.3f));
-    }
-    /* crystal clusters growing out of the rock */
-    for (int i = 0; i < n; i++) {
-        uint32_t h = L->seed * 3u + (uint32_t)i * 4099u;
-        if (hashf(h) > 0.45f) continue;
-        float x = ((float)i + 0.3f + hashf(h + 1) * 0.4f) * sp;
-        float sx = sxof(g, x);
-        if (sx < -80 || sx > VW + 80) continue;
-        int floor = hashf(h + 2) > 0.4f;
-        float y = floor ? terr_bot(g, x) + 6.0f : terr_top(g, x) - 6.0f;
-        float base_ang = floor ? -PI_F * 0.5f : PI_F * 0.5f;
-        int k = 2 + (int)(hashf(h + 3) * 2.0f);
-        for (int c = 0; c < k; c++) {
-            float a = base_ang + (hashf(h + 10 + (uint32_t)c) - 0.5f) * 1.1f;
-            float len = 26.0f + hashf(h + 20 + (uint32_t)c) * 34.0f;
-            draw_crystal_prism(sx + ((float)c - 1.0f) * 9.0f, y, a, len, 10.0f + len * 0.12f, 0xF39BFFFFu, 0xA03CE0FFu, 0xFFE0FFFFu);
-        }
-    }
-    gfx_blend(BL_ADD);
-    for (int i = 0; i < n; i++) {
-        uint32_t h = L->seed * 3u + (uint32_t)i * 4099u;
-        if (hashf(h) > 0.45f) continue;
-        float x = ((float)i + 0.3f + hashf(h + 1) * 0.4f) * sp;
-        float sx = sxof(g, x);
-        if (sx < -80 || sx > VW + 80) continue;
-        int floor = hashf(h + 2) > 0.4f;
-        float y = floor ? terr_bot(g, x) - 20.0f : terr_top(g, x) + 20.0f;
-        float pulse = 0.55f + 0.45f * sinf(g->time * 1.7f + (float)i);
-        gfx_glow(sx, y, 60.0f, col_a(0xD060FFFFu, 0.22f * pulse));
-    }
-    /* thin bright rim lines along the cave edge */
-    for (int i = 0; i < n; i++) {
-        float sx0 = sxof(g, (float)i * sp);
-        if (sx0 > VW + 4 || sx0 + sp < -4) continue;
-        int j = (i + 1) % n;
-        gfx_line(sx0, g->ttop[i] - 1, sx0 + sp, g->ttop[j] - 1, 2.0f, col_a(L->terr_hi, 0.5f), col_a(L->terr_hi, 0.5f));
-        gfx_line(sx0, g->tbot[i] + 1, sx0 + sp, g->tbot[j] + 1, 2.0f, col_a(WHITE, 0.25f), col_a(WHITE, 0.25f));
-    }
-    gfx_blend(BL_ALPHA);
-}
-
-/* ------------------------------------------------------------------ */
-/* ship                                                                 */
-/* ------------------------------------------------------------------ */
-/* The ship is modelled straight from the reference drawing: coordinates are in the drawing's pixels
- * (2000 x 800, nose pointing right) and converted to game units here. */
-#define MX(px) (((float)(px) - 1080.0f) * 0.044f)
-#define MY(py) (((float)(py) - 500.0f) * 0.055f)
-static void xtri_img(const Xf *t, float ax, float ay, float bx, float by, float cx, float cy, uint32_t c)
-{
-    xtri(t, MX(ax), MY(ay), MX(bx), MY(by), MX(cx), MY(cy), c);
-}
-static void xquad_img(const Xf *t, float ax, float ay, float bx, float by, float cx, float cy, float dx, float dy, uint32_t c)
-{
-    xquad(t, MX(ax), MY(ay), MX(bx), MY(by), MX(cx), MY(cy), MX(dx), MY(dy), c);
-}
-/* stripes across a fin: the band between two slanted edges (rear edge a0->a1, front edge b0->b1), split top to bottom */
-static void fin_stripes(const Xf *t, float ax0, float ay0, float ax1, float ay1, float bx0, float by0, float bx1, float by1, int n)
-{
-    for (int k = 0; k < n; k++) {
-        float u0 = (float)k / (float)n, u1 = (float)(k + 1) / (float)n;
-        uint32_t c = (k & 1) ? 0xF4F4F8FFu : 0xE8262EFFu;
-        xquad_img(t, ax0 + (ax1 - ax0) * u0, ay0 + (ay1 - ay0) * u0, bx0 + (bx1 - bx0) * u0, by0 + (by1 - by0) * u0,
-                  bx0 + (bx1 - bx0) * u1, by0 + (by1 - by0) * u1, ax0 + (ax1 - ax0) * u1, ay0 + (ay1 - ay0) * u1, c);
-    }
-}
-/* italic pixel text painted on the hull; mirrored when the ship faces left so it still reads correctly */
-static void hull_text(const Xf *t, const char *s, float x0, float y0, float pw, float ph, float slant, uint32_t c)
-{
-    int n = (int)strlen(s);
-    float w = ((float)n * 6.0f - 1.0f) * pw, cx = x0 + w * 0.5f;
-    int mirror = t->sx < 0;
-    for (int i = 0; i < n; i++) {
-        const uint8_t *gl = gfx_glyph(s[i]);
-        if (!gl) continue;
-        for (int r = 0; r < 7; r++)
-            for (int col = 0; col < 5; col++) {
-                if (!(gl[r] & (0x10 >> col))) continue;
-                float lx = x0 + ((float)i * 6.0f + (float)col) * pw + (6.0f - (float)r) * slant, ly = y0 + (float)r * ph;
-                float ax = lx, bx = lx + pw;
-                if (mirror) { ax = 2.0f * cx - (lx + pw); bx = 2.0f * cx - lx; }
-                xquad(t, ax, ly, bx, ly, bx, ly + ph, ax, ly + ph, c);
+        uint32_t h = seed0 + (uint32_t)i * 7919u;
+        float x = posmod(hf(h) * P - s, P) - 120.0f;
+        if (x < -60 || x > VW + 60) continue;
+        float y = WALL_TOP + 30.0f + hf(h + 1) * (WALL_BOT - WALL_TOP - 60.0f);
+        uint32_t seed = h + (uint32_t)boil * 131u;
+        int kind = (int)(hf(h + 2) * (big ? 4.0f : 5.0f));
+        float r = big ? 16.0f + hf(h + 3) * 14.0f : 4.0f + hf(h + 3) * 4.0f;
+        uint32_t light = col_a(C_GREY, 0.55f);
+        if (!big) {
+            switch (kind) {
+            case 0: pen_line(x - r, y, x + r, y, 1.6f, light, seed, 0.4f); pen_line(x, y - r, x, y + r, 1.6f, light, seed + 1, 0.4f); break;
+            case 1: pen_line(x - r * 0.7f, y - r * 0.7f, x + r * 0.7f, y + r * 0.7f, 1.6f, light, seed, 0.4f);
+                    pen_line(x + r * 0.7f, y - r * 0.7f, x - r * 0.7f, y + r * 0.7f, 1.6f, light, seed + 1, 0.4f); break;
+            case 2: { Poly p; poly_clear(&p); poly_add(&p, x - r * 0.6f, y - r * 0.6f); poly_add(&p, x + r * 0.6f, y - r * 0.6f);
+                      poly_add(&p, x + r * 0.6f, y + r * 0.6f); poly_add(&p, x - r * 0.6f, y + r * 0.6f);
+                      pen_poly(&p, 1, 1.5f, light, seed, 0.4f); break; }
+            case 3: { Poly p; poly_clear(&p);                       /* five-point star */
+                      for (int k = 0; k < 10; k++) { float a = -PI_F * 0.5f + PI_F * (float)k / 5.0f, rr = (k & 1) ? r * 0.45f : r * 1.2f; poly_add(&p, x + cosf(a) * rr, y + sinf(a) * rr); }
+                      pen_poly(&p, 1, 1.3f, light, seed, 0.4f); break; }
+            default: blob(x, y, 2.0f, 2.0f, light, 0, 0, seed, 0.1f); break;
             }
+        } else {
+            uint32_t pen = col_a(C_GREY, 0.42f);
+            switch (kind) {
+            case 0: {                                                /* ringed planet */
+                Poly pl; poly_blob(&pl, x, y, r, r, 18, 0.05f, seed);
+                pen_poly(&pl, 1, 1.8f, pen, seed, 0.6f);
+                Poly ring; poly_clear(&ring);
+                for (int k = 0; k <= 18; k++) { float a = -0.3f + (PI_F + 0.6f) * (float)k / 18.0f; poly_add(&ring, x + cosf(a) * r * 1.8f, y + sinf(a) * r * 0.45f); }
+                pen_poly(&ring, 0, 1.8f, pen, seed + 5, 0.5f);
+                break;
+            }
+            case 1: {                                                /* smiley moon */
+                Poly mn; poly_blob(&mn, x, y, r, r, 18, 0.04f, seed);
+                pen_poly(&mn, 1, 1.8f, pen, seed, 0.5f);
+                pen_line(x - r * 0.35f, y - r * 0.3f, x - r * 0.35f, y - r * 0.1f, 1.8f, pen, seed + 1, 0.1f);
+                pen_line(x + r * 0.3f, y - r * 0.3f, x + r * 0.3f, y - r * 0.1f, 1.8f, pen, seed + 2, 0.1f);
+                Poly m; poly_clear(&m);
+                for (int k = 0; k <= 8; k++) { float a = 0.4f + (PI_F - 0.8f) * (float)k / 8.0f; poly_add(&m, x + cosf(a) * r * 0.5f, y + r * 0.05f + sinf(a) * r * 0.45f); }
+                pen_poly(&m, 0, 1.6f, pen, seed + 3, 0.3f);
+                break;
+            }
+            case 2: {                                                /* comet */
+                for (int k = 0; k < 3; k++)
+                    pen_line(x + r * 0.5f, y + (float)(k - 1) * 4.0f, x + r * 2.4f, y + (float)(k - 1) * 7.0f, 1.6f, pen, seed + (uint32_t)k, 0.6f);
+                Poly c; poly_blob(&c, x, y, r * 0.45f, r * 0.45f, 10, 0.1f, seed);
+                pen_poly(&c, 1, 1.8f, pen, seed, 0.4f);
+                break;
+            }
+            default: {                                               /* spiral galaxy scribble */
+                Poly sp2; poly_clear(&sp2);
+                for (int k = 0; k < 28; k++) { float a = (float)k * 0.5f, rr = r * (float)k / 28.0f; poly_add(&sp2, x + cosf(a) * rr, y + sinf(a) * rr * 0.7f); }
+                pen_poly(&sp2, 0, 1.8f, pen, seed, 0.6f);
+                break;
+            }
+            }
+        }
     }
 }
 
-static void ship_model(const Xf *t)
+static void draw_background(const Game *g, float shx, float shy)
 {
-    const uint32_t BLUE_HI = 0x2C66F2FFu, BLUE = 0x0C42D2FFu, BLUE_LO = 0x07309EFFu, BLUE_FAR = 0x0A2E92FFu;
-    const uint32_t GOLD = 0xFFC628FFu, GOLD_LO = 0xE59A10FFu, WHITE_ = 0xF4F4F8FFu;
-
-    /* far-side tail fin (behind the body) */
-    xquad_img(t, 755, 228, 918, 228, 1015, 330, 790, 338, BLUE_FAR);
-    fin_stripes(t, 755, 228, 790, 336, 836, 228, 868, 336, 4);
-
-    /* engine block and nozzle */
-    xquad_img(t, 215, 408, 392, 408, 392, 606, 215, 606, 0x2E2E38FFu);
-    xquad_img(t, 215, 408, 392, 408, 392, 448, 215, 448, 0x4C4C5AFFu);
-    xquad_img(t, 215, 566, 392, 566, 392, 606, 215, 606, 0x1C1C24FFu);
-
-    /* main tail fin */
-    xquad_img(t, 222, 142, 466, 142, 712, 400, 268, 420, BLUE);
-    xtri_img(t, 466, 142, 712, 400, 560, 330, BLUE_HI);
-    fin_stripes(t, 222, 142, 268, 420, 300, 142, 372, 420, 6);
-    hull_text(t, "07", MX(388), MY(280), 1.4f, 0.8f, 0.3f, WHITE_);
-
-    /* fuselage: low-poly slices between the top contour, the chine line and the belly */
-    static const float SL[8][4] = {     /* x, top, chine, belly (drawing pixels) */
-        {380, 410, 425, 642}, {712, 352, 412, 642}, {1125, 304, 418, 642}, {1200, 295, 432, 560},
-        {1270, 287, 442, 600}, {1300, 300, 452, 632}, {1700, 490, 522, 636}, {1955, 612, 614, 622},
-    };
-    for (int k = 0; k < 7; k++) {
-        const float *a = SL[k], *b = SL[k + 1];
-        float am = a[2] + (a[3] - a[2]) * 0.62f, bm = b[2] + (b[3] - b[2]) * 0.62f;      /* lower chine */
-        xquad_img(t, a[0], a[1], b[0], b[1], b[0], b[2], a[0], a[2], BLUE_HI);
-        xquad_img(t, a[0], a[2], b[0], b[2], b[0], bm, a[0], am, BLUE);
-        xquad_img(t, a[0], am, b[0], bm, b[0], b[3], a[0], a[3], BLUE_LO);
-    }
-
-    /* gold stripes */
-    xquad_img(t, 445, 416, 512, 414, 592, 642, 512, 642, GOLD);                            /* rear band */
-    xquad_img(t, 1008, 330, 1075, 320, 1345, 426, 1240, 446, GOLD);                         /* diagonal sweep */
-    xquad_img(t, 1240, 446, 1345, 426, 1700, 502, 1655, 528, GOLD);
-    xquad_img(t, 1655, 528, 1700, 502, 1955, 613, 1700, 600, GOLD);                         /* gold nose */
-    xquad_img(t, 1700, 600, 1955, 613, 1955, 622, 1700, 636, GOLD_LO);
-
-    /* canopy */
-    xquad_img(t, 1295, 296, 1500, 338, 1705, 492, 1338, 426, 0x26357CFFu);
-    xquad_img(t, 1312, 302, 1494, 342, 1580, 400, 1322, 356, 0x6F86DCFFu);
-    xtri_img(t, 1330, 312, 1420, 330, 1335, 336, 0xC8D4FFFFu);
-
-    /* eagle emblem */
-    xtri_img(t, 790, 540, 625, 445, 722, 560, WHITE_);
-    xtri_img(t, 790, 562, 652, 500, 738, 588, WHITE_);
-    xtri_img(t, 790, 540, 955, 445, 858, 560, WHITE_);
-    xtri_img(t, 790, 562, 928, 500, 842, 588, WHITE_);
-    xquad_img(t, 774, 508, 806, 508, 800, 600, 780, 600, WHITE_);
-    xtri_img(t, 790, 488, 808, 508, 772, 508, WHITE_);
-    xtri_img(t, 780, 600, 800, 600, 790, 618, WHITE_);
+    float jx = (hf((uint32_t)boil * 3u + 1u) - 0.5f) * 1.6f, jy = (hf((uint32_t)boil * 5u + 2u) - 0.5f) * 1.2f;
+    gfx_view(shx + jx, shy + jy, 1.0f);
+    draw_paper();
+    draw_space_doodles(g, 0.25f, 7, 0xBEEFu, 1);
+    draw_space_doodles(g, 0.5f, 46, 0xF00Du, 0);
+    draw_binder_holes();
 }
-#define SHIP_TAIL_X MX(215)
-#define SHIP_NOSE_X MX(1955)
+
+/* ------------------------------------------------------------------ */
+/* the player's rocket                                                  */
+/* ------------------------------------------------------------------ */
+static void ship_model(const Xf *t, float flame, float time)
+{
+    static const float FIN_T[4][2] = {{-2, -10}, {-15, -23}, {-24, -22}, {-17, -8}};
+    static const float FIN_B[4][2] = {{-2, 10}, {-17, 8}, {-24, 22}, {-15, 23}};
+    static const float BODY[10][2] = {{30, 0}, {22, -7.5f}, {8, -11.5f}, {-10, -11}, {-20, -8}, {-23, 0}, {-20, 8}, {-10, 11}, {8, 11.5f}, {22, 7.5f}};
+    static const float NOSE[4][2] = {{31, 0}, {20, -8.5f}, {16, 0}, {20, 8.5f}};
+    static const float STRIPE[4][2] = {{-6, -11}, {-1, -11.4f}, {-1, 11.4f}, {-6, 11}};
+    shape(t, FIN_T, 4, C_YELLOW, INK, 2.2f, 101);
+    shape(t, FIN_B, 4, C_YELLOW, INK, 2.2f, 102);
+    if (flame > 0) {
+        float L = flame * (1.0f + 0.25f * sinf(time * 47.0f)), z = sinf(time * 31.0f) * 2.0f;
+        float F[7][2] = {{-21, -6.5f}, {-21 - L * 0.55f, -8.5f + z}, {-21 - L * 0.5f, -3}, {-21 - L, z}, {-21 - L * 0.5f, 3}, {-21 - L * 0.55f, 8.5f - z}, {-21, 6.5f}};
+        shape(t, (const float (*)[2])F, 7, C_YELLOW, INK, 1.8f, 103);
+        float F2[5][2] = {{-21, -3.5f}, {-21 - L * 0.4f, -2.5f}, {-21 - L * 0.62f, z * 0.5f}, {-21 - L * 0.4f, 2.5f}, {-21, 3.5f}};
+        shape(t, (const float (*)[2])F2, 5, C_RED, 0, 0, 104);
+    }
+    shape(t, BODY, 10, C_ORANGE, INK, 2.4f, 105);
+    shape(t, STRIPE, 4, C_RED, 0, 0, 106);
+    xline(t, -6, -11, -6, 11, 1.6f, INK, 107);
+    xline(t, -1, -11.4f, -1, 11.4f, 1.6f, INK, 108);
+    shape(t, NOSE, 4, C_RED, INK, 2.2f, 109);
+    xblob(t, 7, -1, 6.5f, C_SKY, INK, 2.0f, 110);
+    xline(t, 4.5f, -4.5f, 7.5f, -5.5f, 1.8f, WHITE, 111);                 /* shine on the window */
+}
 
 static void draw_trail(const Game *g)
 {
-    if (g->trail_n < 2) return;
-    float px = 0, py = 0, pnx = 0, pny = 0;
+    if (g->trail_n < 3) return;
+    /* a curly pencil "swoosh" behind the ship, like the reference */
+    float px = 0, py = 0;
+    gfx_tex(TEX_SOLID);
     for (int i = 0; i < g->trail_n; i++) {
         float sx = sxof(g, g->trail[i][0]), sy = g->trail[i][1];
-        float nx = 0, ny = 1;
-        if (i + 1 < g->trail_n) {
-            float dx = wd(g, g->trail[i + 1][0] - g->trail[i][0]), dy = g->trail[i + 1][1] - sy;
-            float l = sqrtf(dx * dx + dy * dy);
-            if (l > 0.01f) { nx = -dy / l; ny = dx / l; }
-        } else { nx = pnx; ny = pny; }
         float t = 1.0f - (float)i / (float)(g->trail_n - 1);
-        float w = 7.0f * t + 1.0f;
-        if (i > 0 && fabsf(sx - px) < 200.0f) {
-            float t0 = 1.0f - (float)(i - 1) / (float)(g->trail_n - 1);
-            uint32_t c0 = col_a(col_mix(0x3A5BFFFFu, 0x8AF6FFFFu, t0), t0 * 0.85f), c1 = col_a(col_mix(0x3A5BFFFFu, 0x8AF6FFFFu, t), t * 0.85f);
-            float w0 = 7.0f * t0 + 1.0f;
-            gfx_quad4(px + pnx * w0, py + pny * w0, c0 & 0xFFFFFF00u, sx + nx * w, sy + ny * w, c1 & 0xFFFFFF00u, sx, sy, c1, px, py, c0);
-            gfx_quad4(px, py, c0, sx, sy, c1, sx - nx * w, sy - ny * w, c1 & 0xFFFFFF00u, px - pnx * w0, py - pny * w0, c0 & 0xFFFFFF00u);
+        if (i > 0 && fabsf(sx - px) < 120.0f) {
+            gfx_line(px, py, sx, sy, 7.0f * t + 1.0f, col_a(0x5A5A68FFu, 0.75f * t), col_a(0x5A5A68FFu, 0.75f * t));
+            gfx_line(px, py, sx, sy, 4.5f * t, col_a(PAPER, 0.95f * t), col_a(PAPER, 0.95f * t));
         }
-        px = sx; py = sy; pnx = nx; pny = ny;
+        px = sx; py = sy;
     }
 }
 
@@ -333,327 +277,316 @@ static void draw_player(const Game *g)
     if (!g->alive) return;
     float sx = sxof(g, g->px), sy = g->py;
     float ft = g->flip_t > 0 ? g->flip_t : 0.0f;
-    float scx = (float)g->face * cosf(PI_F * ft);
-    float scy = 1.0f - 0.25f * sinf(PI_F * ft);
+    float scx = (float)g->face * cosf(PI_F * ft) * 1.1f;
+    float scy = (1.0f - 0.25f * sinf(PI_F * ft)) * 1.1f;
     float rot = g->tilt * (scx >= 0 ? 1.0f : -1.0f) + g->flip_dir * sinf(PI_F * ft) * 0.25f;
-    if (fabsf(scx) < 0.08f) scx = scx < 0 ? -0.08f : 0.08f;
+    if (fabsf(scx) < 0.1f) scx = scx < 0 ? -0.1f : 0.1f;
     Xf t = xf(sx, sy - sinf(PI_F * ft) * 6.0f, rot, scx, scy);
-    int blink = g->inv_t > 0 && ((int)(g->time * 20.0f) & 1);
-
-    gfx_blend(BL_ADD);
+    int blink = g->inv_t > 0 && ((int)(g->time * 16.0f) & 1);
     draw_trail(g);
-    /* engine flame */
-    float fl = 0.75f + 0.25f * sinf(g->time * 60.0f) + 0.15f * hashf((uint32_t)g->frame);
-    float boost = 1.0f + clampf((g->pvx * (float)g->face) / SHIP_SPEED, 0, 1) * 0.8f;
-    /* blocky cyan thruster flame, like the reference drawing */
-    float L = 11.0f * fl * boost, E = SHIP_TAIL_X, ey = MY(507);
-    xquad(&t, E, ey - 5.4f, E - L * 1.25f, ey - 3.9f, E - L * 1.35f, ey + 3.9f, E, ey + 5.4f, col_a(0x2FA8FFFFu, 0.75f));
-    xquad(&t, E, ey - 4.4f, E - L, ey - 2.9f, E - L * 1.05f, ey + 2.9f, E, ey + 4.4f, col_a(0x7DF9FFFFu, 0.95f));
-    xquad(&t, E, ey - 2.7f, E - L * 0.65f, ey - 1.7f, E - L * 0.7f, ey + 1.7f, E, ey + 2.7f, WHITE);
-    xglow(&t, E - 4.0f, ey, 34.0f * fl, col_a(0x5CC8FFFFu, 0.6f));
-    float lx, ly;
-    xpt(&t, 0, 0, &lx, &ly);
-    gfx_glow(lx, ly, 90.0f, col_a(0x6FB8FFFFu, 0.14f));     /* the ship lights up its surroundings */
-    gfx_blend(BL_ALPHA);
-
-    if (!blink) {
-        Xf s = t;
-        if (g->inv_t > 0) s.flash = 0.25f;
-        ship_model(&s);
-    }
-    /* heat gauge */
+    float boost = 1.0f + clampf((g->pvx * (float)g->face) / SHIP_SPEED, 0, 1) * 0.7f;
+    if (!blink) ship_model(&t, 12.0f * boost, g->time);
+    /* heat: a little thermometer drawn over the ship */
     if (g->heat > 0.25f || g->overheat) {
-        gfx_blend(BL_ADD);
-        float h = g->heat;
-        uint32_t c = g->overheat ? (((int)(g->time * 12.0f) & 1) ? 0xFF3030FFu : 0xFFA030FFu) : col_mix(0xFFC23DFFu, 0xFF3020FFu, h);
-        gfx_arc(sx, sy, 48.0f, 52.0f, -PI_F * 0.5f, -PI_F * 0.5f + TAU * h, 24, col_a(c, 0.3f), col_a(c, 0.9f));
-        gfx_blend(BL_ALPHA);
+        float x = sx - 20.0f, y = sy - 36.0f, w = 40.0f, h = 7.0f;
+        Poly p; poly_clear(&p);
+        poly_add(&p, x, y); poly_add(&p, x + w, y); poly_add(&p, x + w, y + h); poly_add(&p, x, y + h);
+        gfx_tex(TEX_SOLID);
+        gfx_rect(x, y, w, h, col_a(PAPER, 0.9f));
+        Poly f; poly_clear(&f);
+        float fw = w * clampf(g->heat, 0, 1);
+        poly_add(&f, x, y); poly_add(&f, x + fw, y); poly_add(&f, x + fw, y + h); poly_add(&f, x, y + h);
+        gfx_uv(x, y, 64, 0, 0);
+        uint32_t c = g->overheat ? (((int)(g->time * 10.0f) & 1) ? C_RED : C_ORANGE) : col_mix(C_YELLOW, C_RED, g->heat);
+        crayon_fill(&f, c);
+        crayon_fill(&f, c);
+        pen_poly(&p, 1, 1.6f, INK, 0x7E7u, 0.4f);
+        if (g->overheat) gfx_text_fancy("hot!", sx, y - 22.0f, 18.0f, C_RED, PAPER, 1.6f, g->time, 2.0f);
     }
 }
 
 static void draw_blade(const Game *g)
 {
     if (!g->blade_on || !g->alive) return;
-    float sx = sxof(g, g->px), sy = g->py;
-    float dir = (float)g->face;
+    float sx = sxof(g, g->px), sy = g->py, dir = (float)g->face;
     float grow = clampf(g->blade_t / 0.1f, 0, 1);
     float R = BLADE_R * (0.6f + 0.4f * grow);
-    gfx_blend(BL_ADD);
-    gfx_glow(sx, sy, R * 1.25f, col_a(COL_B, 0.16f));
-    gfx_ring2(sx, sy, R, 6.0f, 40, 0, col_a(COL_B, 0.08f), col_a(COL_B, 0.35f));
     for (int k = 0; k < 2; k++) {
         float a = g->blade_ang + PI_F * (float)k;
-        /* motion-blur sweep behind the blade */
-        gfx_arc(sx, sy, 30.0f, R + 6.0f, a - dir * 2.0f, a, 16, col_a(COL_B, 0.0f), col_a(COL_B, 0.6f));
-        gfx_arc(sx, sy, R - 16.0f, R + 10.0f, a - dir * 1.2f, a, 10, col_a(WHITE, 0.0f), col_a(WHITE, 0.75f));
-        float cx = cosf(a), cy = sinf(a);
-        float px_ = -cy, py_ = cx;                       /* chunky faceted sabre: a long lozenge with a bright core */
-        float r0 = 30.0f, r1 = R + 14.0f, rm = r0 + (r1 - r0) * 0.55f, hw = 9.0f;
-        gfx_glowline(sx + cx * r0, sy + cy * r0, sx + cx * r1, sy + cy * r1, 34.0f, col_a(COL_B, 0.85f));
-        gfx_quad4(sx + cx * r0, sy + cy * r0, col_a(COL_B, 0.9f), sx + cx * rm + px_ * hw, sy + cy * rm + py_ * hw, col_a(0x9CFFE0FFu, 0.95f),
-                  sx + cx * r1, sy + cy * r1, WHITE, sx + cx * rm - px_ * hw, sy + cy * rm - py_ * hw, col_a(0x9CFFE0FFu, 0.95f));
-        gfx_quad4(sx + cx * (r0 + 8), sy + cy * (r0 + 8), WHITE, sx + cx * rm + px_ * 3.5f, sy + cy * rm + py_ * 3.5f, WHITE,
-                  sx + cx * (r1 - 4), sy + cy * (r1 - 4), WHITE, sx + cx * rm - px_ * 3.5f, sy + cy * rm - py_ * 3.5f, WHITE);
-        gfx_glow_cheap(sx + cx * (R + 8.0f), sy + cy * (R + 8.0f), 34.0f, col_a(WHITE, 0.8f));
+        Poly p; poly_clear(&p);                                   /* a fat crayon crescent swoosh */
+        const int N = 12;
+        for (int i = 0; i <= N; i++) { float u = (float)i / N, aa = a - dir * 1.9f * u, rr = R + 4.0f - 2.0f * u; poly_add(&p, sx + cosf(aa) * rr, sy + sinf(aa) * rr); }
+        for (int i = N; i >= 0; i--) { float u = (float)i / N, aa = a - dir * 1.9f * u, rr = R - 26.0f * (1.0f - u) - 2.0f; poly_add(&p, sx + cosf(aa) * rr, sy + sinf(aa) * rr); }
+        gfx_uv(sx, sy, 128, 0.2f * (float)k, 0);
+        crayon_fill(&p, C_MINT);
+        pen_poly(&p, 1, 2.4f, INK, 0xB1Au + (uint32_t)k, 0.8f);
+        for (int m = 0; m < 3; m++) {                              /* whoosh lines */
+            float aa = a - dir * (0.5f + 0.45f * (float)m), r0 = R + 10.0f, r1 = R + 18.0f + 6.0f * (float)m;
+            pen_line(sx + cosf(aa) * r0, sy + sinf(aa) * r0, sx + cosf(aa - dir * 0.25f) * r1, sy + sinf(aa - dir * 0.25f) * r1, 1.8f, INK, 0x77u + (uint32_t)m, 0.3f);
+        }
     }
-    gfx_blend(BL_ALPHA);
 }
 
 static void draw_lance(const Game *g)
 {
     if (!g->alive) return;
     float sx = sxof(g, g->px), sy = g->py;
-    gfx_blend(BL_ADD);
-    if (g->lance_charge > 0) {
-        float p = 1.0f - g->lance_charge / 0.3f;
-        float nx = sx + (float)g->face * 42.0f;
-        gfx_glow(nx, sy, 26.0f + 64.0f * p, col_a(col_hsv(g->time * 3.0f, 0.5f, 1.0f, 255), 0.5f + 0.4f * p));
-        gfx_ring(nx, sy, 70.0f * (1.0f - p) + 8.0f, 3.0f, 24, 0, col_a(COL_Y, p));
-        gfx_ring(nx, sy, 40.0f * (1.0f - p) + 4.0f, 2.0f, 4, g->time * 6.0f, col_a(WHITE, p));
+    if (g->lance_charge > 0) {                                     /* pencil spiral winding into the nose */
+        float p = 1.0f - g->lance_charge / 0.3f, nx = sx + (float)g->face * 42.0f;
+        Poly s; poly_clear(&s);
+        for (int k = 0; k < 30; k++) { float a = (float)k * 0.55f + g->time * 14.0f, rr = (60.0f * (1.0f - p) + 6.0f) * (1.0f - (float)k / 34.0f); poly_add(&s, nx + cosf(a) * rr, sy + sinf(a) * rr); }
+        pen_poly(&s, 0, 2.0f, C_BLUE, 0x5A1u, 0.4f);
+        blob(nx, sy, 5.0f + 9.0f * p, 5.0f + 9.0f * p, C_SKY, INK, 1.8f, 0x5A2u, 0.15f);
     }
     if (g->lance_on) {
-        float lt = g->lance_t / 0.5f;                     /* 1 -> 0 */
-        float wmul = lt > 0.85f ? (1.0f - lt) / 0.15f * 1.4f : sqrtf(lt) * (1.0f + 0.12f * sinf(g->time * 70.0f));
-        float w = LANCE_W * wmul;
-        float x0 = sx + (float)g->lance_dir * 40.0f, x1 = x0 + (float)g->lance_dir * LANCE_LEN;
-        uint32_t hue = col_hsv(g->time * 1.5f, 0.6f, 1.0f, 255);
-        gfx_glowline(x0, sy, x1, sy, w * 3.2f, col_a(0xFF4FD8FFu, 0.22f * lt + 0.08f));
-        gfx_glowline(x0, sy, x1, sy, w * 1.8f, col_a(hue, 0.45f));
-        gfx_glowline(x0, sy, x1, sy, w * 1.1f, col_a(COL_Y, 0.6f));
-        gfx_rect(fminf(x0, x1), sy - w * 0.13f, fabsf(x1 - x0), w * 0.26f, WHITE);
-        /* rainbow helix running along the beam */
-        for (int k = 0; k < 2; k++) {
-            float ph = g->time * 30.0f + (float)k * PI_F;
-            float pxx = x0, pyy = sy + sinf(ph) * w * 0.8f;
-            for (int s = 1; s <= 40; s++) {
-                float d = (float)s / 40.0f * LANCE_LEN;
-                float nx = x0 + (float)g->lance_dir * d, ny = sy + sinf(ph + d * 0.03f) * w * 0.8f;
-                uint32_t c = col_hsv((float)s / 40.0f + g->time * 2.0f + (float)k * 0.5f, 0.7f, 1.0f, (int)(220.0f * lt));
-                gfx_line(pxx, pyy, nx, ny, 3.0f, c, c);
-                pxx = nx; pyy = ny;
-            }
+        float lt = g->lance_t / 0.5f;
+        float wmul = lt > 0.85f ? (1.0f - lt) / 0.15f * 1.3f : sqrtf(lt);
+        float w = LANCE_W * 0.5f * wmul;
+        float dir = (float)g->lance_dir;
+        float x0 = sx + dir * 40.0f, x1 = x0 + dir * LANCE_LEN;
+        uint32_t seed = 0x1A2Cu + (uint32_t)(g->time * 30.0f);          /* jittery, crackly edges */
+        Poly p; poly_clear(&p);
+        poly_add(&p, x0, sy - w * 0.45f);
+        for (int i = 1; i <= 10; i++) { float u = (float)i / 10; poly_add(&p, x0 + (x1 - x0) * u, sy - w * (0.7f + 0.3f * u) + noise1(seed, (float)i) * 4.0f); }
+        for (int i = 10; i >= 1; i--) { float u = (float)i / 10; poly_add(&p, x0 + (x1 - x0) * u, sy + w * (0.7f + 0.3f * u) + noise1(seed + 9, (float)i) * 4.0f); }
+        poly_add(&p, x0, sy + w * 0.45f);
+        poly_add(&p, x0 - dir * w * 0.5f, sy);
+        gfx_uv(sx, sy, 128, g->time * 2.0f, 0);
+        crayon_fill(&p, C_SKY);
+        pen_poly(&p, 1, 2.6f, INK, seed, 0.6f);
+        gfx_tex(TEX_SOLID);
+        gfx_quad4(x0, sy - w * 0.18f, WHITE, x1, sy - w * 0.3f, WHITE, x1, sy + w * 0.3f, WHITE, x0, sy + w * 0.18f, WHITE);
+        for (int k = 0; k < 3; k++) {                                  /* zig-zag zaps along the beam */
+            Poly z; poly_clear(&z);
+            float yo = (float)(k - 1) * w * 0.5f;
+            for (int i = 0; i <= 14; i++) poly_add(&z, x0 + (x1 - x0) * (float)i / 14.0f, sy + yo + ((i & 1) ? -1.0f : 1.0f) * w * 0.18f);
+            pen_poly(&z, 0, 1.6f, C_BLUE, seed + (uint32_t)k, 0.5f);
         }
-        gfx_glow(x0, sy, 60.0f + 40.0f * lt, col_a(WHITE, 0.8f * lt));
-        gfx_glow(x0, sy, 150.0f, col_a(COL_Y, 0.3f * lt));
-        /* the beam floods the cave with light */
-        gfx_rect_v(0, sy - 160.0f, VW, 160.0f, col_a(COL_Y, 0.0f), col_a(COL_Y, 0.10f * lt));
-        gfx_rect_v(0, sy, VW, 160.0f, col_a(COL_Y, 0.10f * lt), col_a(COL_Y, 0.0f));
+        if (lt > 0.4f) gfx_text_fancy("ZAP!", x0 + dir * 70.0f, sy - w - 34.0f, 30.0f, C_YELLOW, INK, 2.2f, g->time, 3.0f);
     }
-    gfx_blend(BL_ALPHA);
 }
 
 /* ------------------------------------------------------------------ */
 /* enemies                                                              */
 /* ------------------------------------------------------------------ */
-static void draw_shard(const Enemy *e, Xf *t)
+static void draw_shard(const Game *g, const Enemy *e, Xf *t, uint32_t seed)
 {
-    const EnemyStats *s = &ESTAT[EN_SHARD];
-    if (e->aux > 0.5f) {                                     /* winding up a lunge: glow red and tremble */
-        t->x += sinf(e->t * 90.0f) * 1.5f;
-        gfx_blend(BL_ADD);
-        gfx_glow_cheap(t->x, t->y, 30.0f, col_a(0xFF3050FFu, 0.6f));
-        gfx_blend(BL_ALPHA);
+    static const float BODY[8][2] = {{18, 0}, {8, -9.5f}, {-6, -11}, {-14, -7}, {-15, 0}, {-14, 7}, {-6, 11}, {8, 9.5f}};
+    static const float SP[6][3][2] = {
+        {{-9, -10}, {-5, -18}, {-1, -10.5f}}, {{1, -10}, {5, -16}, {8, -9}}, {{-9, 10}, {-1, 10.5f}, {-5, 18}},
+        {{1, 10}, {8, 9}, {5, 16}}, {{-14, -4}, {-22, 0}, {-14, 4}}, {{-12, -8}, {-17, -13}, {-9, -10}} };
+    int angry = e->aux > 0.5f;
+    if (angry) { t->x += sinf(e->t * 80.0f) * 1.8f; }
+    for (int k = 0; k < 6; k++) shape(t, SP[k], 3, C_BLUE_D, INK, 1.8f, seed + 10u + (uint32_t)k);
+    shape(t, BODY, 8, angry ? 0x6A9CF5FFu : C_BLUE, INK, 2.2f, seed);
+    xline(t, -2, -10.4f, -4, 10.4f, 1.6f, INK, seed + 3);                        /* drill grooves */
+    xline(t, -8, -10.8f, -9.5f, 10.8f, 1.6f, INK, seed + 4);
+    eye(t, 7, -2.5f, 3.8f, sxof(g, g->px), g->py, seed + 5);
+    if (angry) {
+        xline(t, 3, -8, 11, -5, 2.0f, C_RED, seed + 6);
+        float x, y; xpt(t, 0, -26, &x, &y);
+        gfx_text_fancy("!", t->x, t->y - 40.0f, 24.0f, C_RED, PAPER, 1.6f, g->time, 0);
     }
-    xtri(t, -9, -11, -16, -16, -13, -7, s->c_accent);        /* spikes */
-    xtri(t, -9, 11, -13, 7, -16, 16, s->c_accent);
-    xtri(t, -12, -3, -20, 0, -12, 3, s->c_accent);
-    xtri(t, 18, 0, -10, -12, -12, -4, s->c_light);           /* faceted drill cone */
-    xtri(t, 18, 0, -12, -4, -12, 4, s->c_mid);
-    xtri(t, 18, 0, -12, 4, -10, 12, s->c_dark);
-    for (int k = 0; k < 2; k++) {                            /* drill grooves */
-        float xa = 6.0f - 9.0f * (float)k, xb = xa - 3.0f;
-        float ha = 12.0f * (18.0f - xa) / 28.0f, hb = 12.0f * (18.0f - xb) / 28.0f;
-        xquad(t, xa, -ha, xb, -hb, xb, hb, xa, ha, col_a(0x1A3A8CFFu, 0.55f));
-    }
-    (void)e;
+    if (e->flash > 0.3f) blob(t->x, t->y, 14, 12, col_a(WHITE, e->flash * 0.8f), 0, 0, seed, 0.1f);
 }
 
-static void draw_zip(const Enemy *e, Xf *t)
+static void draw_zip(const Game *g, const Enemy *e, Xf *t, uint32_t seed)
 {
-    const EnemyStats *s = &ESTAT[EN_ZIP];
-    xtri(t, 13, 0, 0, -8, -2, 0, s->c_light);
-    xtri(t, 13, 0, -2, 0, 0, 8, s->c_mid);
-    xtri(t, 0, -8, -11, -3, -2, 0, s->c_mid);
-    xtri(t, 0, 8, -2, 0, -11, 3, s->c_dark);
-    xtri(t, -11, -3, -2, 0, -11, 3, s->c_dark);
-    (void)e;
+    static const float BODY[7][2] = {{12, 0}, {7, -7}, {-8, -7}, {-11, -3}, {-11, 3}, {-8, 7}, {7, 7}};
+    float sp = sqrtf(e->vx * e->vx + e->vy * e->vy) + 0.01f;
+    for (int k = 0; k < 3; k++) {                                      /* speed lines */
+        float oy = (float)(k - 1) * 5.0f;
+        float x0, y0, x1, y1;
+        xpt(t, -14, oy, &x0, &y0);
+        x1 = x0 - e->vx / sp * (12.0f + 4.0f * (float)(k & 1)); y1 = y0 - e->vy / sp * (12.0f + 4.0f * (float)(k & 1));
+        pen_line(x0, y0, x1, y1, 1.6f, INK, seed + (uint32_t)k, 0.2f);
+    }
+    shape(t, BODY, 7, C_MINT, INK, 2.0f, seed);
+    xline(t, -2, -7, -2, 7, 1.5f, INK, seed + 4);
+    xline(t, -6, -7, -6, 7, 1.5f, INK, seed + 5);
+    eye(t, 5, -1.5f, 3.0f, sxof(g, g->px), g->py, seed + 6);
+    if (e->flash > 0.3f) blob(t->x, t->y, 10, 8, col_a(WHITE, e->flash * 0.8f), 0, 0, seed, 0.1f);
 }
 
-static void draw_spore(const Game *g, const Enemy *e, Xf *t)
+static void draw_spore(const Game *g, const Enemy *e, float sx, float sy, float sc, uint32_t seed)
 {
-    const EnemyStats *s = &ESTAT[EN_SPORE];
     float tele = e->cd < 0.5f ? 1.0f - e->cd / 0.5f : 0.0f;
-    for (int k = 0; k < 8; k++) {                            /* spikes */
+    float R = 20.0f * sc * (1.0f + 0.12f * tele + 0.04f * sinf(g->time * 6.0f + e->phase));
+    for (int k = 0; k < 8; k++) {                                      /* spikes */
         float a = e->ang + TAU * (float)k / 8.0f;
-        float ca = cosf(a), sa = sinf(a), pa = cosf(a + 0.3f), pb = sinf(a + 0.3f), qa = cosf(a - 0.3f), qb = sinf(a - 0.3f);
-        float len = 30.0f + tele * 5.0f;
-        xtri(t, pa * 16.0f, pb * 16.0f, ca * len, sa * len, qa * 16.0f, qb * 16.0f, (k & 1) ? s->c_accent : col_mix(s->c_accent, 0x80204FFFu, 0.3f));
+        Poly p; poly_clear(&p);
+        poly_add(&p, sx + cosf(a - 0.28f) * R * 0.85f, sy + sinf(a - 0.28f) * R * 0.85f);
+        poly_add(&p, sx + cosf(a) * R * 1.55f, sy + sinf(a) * R * 1.55f);
+        poly_add(&p, sx + cosf(a + 0.28f) * R * 0.85f, sy + sinf(a + 0.28f) * R * 0.85f);
+        gfx_uv(sx, sy, 128, 0, 0);
+        crayon_fill(&p, C_YELLOW);
+        pen_poly(&p, 1, 1.8f, INK, seed + (uint32_t)k, 0.4f);
     }
-    for (int k = 0; k < 8; k++) {                            /* faceted octagon body lit from the top-left */
-        float a0 = TAU * (float)k / 8.0f + 0.39f, a1 = a0 + TAU / 8.0f;
-        float lit = clampf(0.5f - 0.5f * sinf((a0 + a1) * 0.5f + 0.6f), 0, 1);
-        uint32_t c = col_mix(s->c_dark, s->c_light, lit);
-        xtri(t, 0, 0, cosf(a0) * 21.0f, sinf(a0) * 21.0f, cosf(a1) * 21.0f, sinf(a1) * 21.0f, c);
-    }
-    for (int k = 0; k < 8; k++) {
-        float a0 = TAU * (float)k / 8.0f, a1 = a0 + TAU / 8.0f;
-        xtri(t, 0, 0, cosf(a0) * 11.0f, sinf(a0) * 11.0f, cosf(a1) * 11.0f, sinf(a1) * 11.0f, 0x3A1A80FFu);
-    }
-    gfx_blend(BL_ADD);
-    float pulse = 0.6f + 0.4f * sinf(g->time * 5.0f + e->phase) + tele;
-    gfx_poly(t->x, t->y, 7.0f + 3.0f * tele, 4, g->time * 2.0f, col_a(0xFF7BE0FFu, clampf(pulse, 0, 1)));
-    gfx_glow(t->x, t->y, 30.0f + 30.0f * tele, col_a(0xFF5FC8FFu, 0.35f + 0.5f * tele));
-    gfx_blend(BL_ALPHA);
+    blob(sx, sy, R, R, tele > 0 ? col_mix(0xFF5A6EFFu, 0xFF2A3AFFu, tele) : 0xFF5A6EFFu, INK, 2.4f, seed, 0.07f);
+    Xf t = xf(sx, sy, 0, sc, sc);
+    float lx = sxof(g, g->px), ly = g->py;
+    eye(&t, -7, -4, 5.5f, lx, ly, seed + 20);
+    eye(&t, 7, -4, 5.5f, lx, ly, seed + 21);
+    xline(&t, -12, -12, -3, -9, 2.2f, INK, seed + 22);                    /* grumpy eyebrows */
+    xline(&t, 12, -12, 3, -9, 2.2f, INK, seed + 23);
+    float mo = 3.0f + tele * 5.0f;                                         /* toothy mouth, opens before it spits */
+    static const float M[4][2] = {{-8, 5}, {8, 5}, {8, 9}, {-8, 9}};
+    float Mx[4][2];
+    for (int i = 0; i < 4; i++) { Mx[i][0] = M[i][0]; Mx[i][1] = M[i][1] + (i >= 2 ? mo - 4.0f : 0); }
+    shape(&t, (const float (*)[2])Mx, 4, WHITE, INK, 1.8f, seed + 24);
+    for (int i = 0; i < 4; i++) xline(&t, -6 + (float)i * 4.0f, 5, -4 + (float)i * 4.0f, 5 + mo * 0.5f, 1.2f, INK, seed + 30u + (uint32_t)i);
+    if (e->flash > 0.3f) blob(sx, sy, R, R, col_a(WHITE, e->flash * 0.7f), 0, 0, seed, 0.1f);
 }
 
-static void draw_serpent_head(const Game *g, const Enemy *e, Xf *t)
+static void draw_serpent_head(const Game *g, const Enemy *e, float sx, float sy, float sc, uint32_t seed)
 {
-    const EnemyStats *s = &ESTAT[EN_SERPENT];
-    xtri(t, -6, -14, -18, -24, -2, -16, s->c_accent);        /* crest spikes */
-    xtri(t, -6, 14, -2, 16, -18, 24, s->c_accent);
-    xtri(t, 26, 0, 6, -16, -16, -10, s->c_light);
-    xtri(t, 26, 0, -16, -10, -16, 0, col_mix(s->c_light, s->c_mid, 0.5f));
-    xtri(t, 26, 0, -16, 0, -16, 10, s->c_mid);
-    xtri(t, 26, 0, -16, 10, 6, 16, s->c_dark);
-    xtri(t, 10, -4, 2, -9, 0, -4, 0xFFE0F0FFu);              /* eye slits */
-    xtri(t, 10, 4, 0, 4, 2, 9, 0xFFE0F0FFu);
-    gfx_blend(BL_ADD);
-    xglow(t, 4, -5, 14.0f, col_a(0xFF5FC8FFu, 0.8f));
-    xglow(t, 4, 5, 14.0f, col_a(0xFF5FC8FFu, 0.8f));
-    gfx_blend(BL_ALPHA);
-    (void)g; (void)e;
+    float dir = cosf(e->ang) >= 0 ? 1.0f : -1.0f;
+    Xf t = xf(sx, sy, 0, sc * dir, sc);
+    float bob = sinf(g->time * 8.0f) * 2.0f;
+    xline(&t, 4, -16, 10, -32 + bob, 2.0f, INK, seed + 1);                  /* antennae */
+    xline(&t, -6, -17, -8, -33 - bob, 2.0f, INK, seed + 2);
+    xblob(&t, 10, -33 + bob, 4.0f, C_PINK, INK, 1.6f, seed + 3);
+    xblob(&t, -8, -34 - bob, 4.0f, C_PINK, INK, 1.6f, seed + 4);
+    xblob(&t, 0, 0, 22.0f, C_GREEN, INK, 2.6f, seed);
+    float lx = sxof(g, g->px), ly = g->py;
+    eye(&t, -1, -6, 6.5f, lx, ly, seed + 5);
+    eye(&t, 13, -6, 6.5f, lx, ly, seed + 6);
+    Poly m; poly_clear(&m);                                                /* big grin with fangs */
+    for (int k = 0; k <= 8; k++) { float a = 0.3f + 2.2f * (float)k / 8.0f; xadd(&m, &t, 6 + cosf(a) * 12.0f, 2 + sinf(a) * 9.0f); }
+    pen_poly(&m, 0, 2.0f, INK, seed + 7, 0.3f);
+    static const float F1[3][2] = {{8, 11}, {11, 11}, {9.5f, 16}}, F2[3][2] = {{14, 9.5f}, {17, 8.5f}, {16, 13.5f}};
+    shape(&t, F1, 3, WHITE, INK, 1.2f, seed + 8);
+    shape(&t, F2, 3, WHITE, INK, 1.2f, seed + 9);
+    xblob(&t, -10, 6, 3.5f, col_a(C_PINK, 0.8f), 0, 0, seed + 10);         /* blushing cheek */
+    if (e->flash > 0.3f) blob(sx, sy, 22 * sc, 22 * sc, col_a(WHITE, e->flash * 0.7f), 0, 0, seed, 0.1f);
 }
 
-static void draw_segment(const Enemy *e, Xf *t)
+static void draw_segment(const Game *g, const Enemy *e, float sx, float sy, float sc, uint32_t seed)
 {
-    const EnemyStats *s = &ESTAT[EN_SEG];
-    float r = e->r;
-    if (e->idx & 1) xtri(t, -2, -r * 0.7f, -r * 0.9f, -r * 1.35f, r * 0.2f, -r * 0.8f, s->c_accent);
-    else            xtri(t, -2, r * 0.7f, r * 0.2f, r * 0.8f, -r * 0.9f, r * 1.35f, s->c_accent);
-    xtri(t, 0, 0, r * 1.1f, 0, 0, -r, s->c_light);           /* faceted diamond */
-    xtri(t, 0, 0, 0, -r, -r * 1.1f, 0, col_mix(s->c_light, s->c_mid, 0.6f));
-    xtri(t, 0, 0, -r * 1.1f, 0, 0, r, s->c_dark);
-    xtri(t, 0, 0, 0, r, r * 1.1f, 0, s->c_mid);
+    float r = e->r * sc;
+    float wig = sinf(g->time * 10.0f + (float)e->idx) * 3.0f;
+    pen_line(sx - 4, sy + r * 0.8f, sx - 7 + wig, sy + r + 6, 1.8f, INK, seed + 1, 0.2f);     /* little legs */
+    pen_line(sx + 4, sy + r * 0.8f, sx + 7 - wig, sy + r + 6, 1.8f, INK, seed + 2, 0.2f);
+    blob(sx, sy, r, r, (e->idx & 1) ? C_GREEN_D : C_GREEN, INK, 2.2f, seed, 0.06f);
+    blob(sx - r * 0.3f, sy - r * 0.3f, r * 0.22f, r * 0.18f, col_a(C_YELLOW, 0.9f), 0, 0, seed + 3, 0.1f);
+    blob(sx + r * 0.35f, sy + r * 0.1f, r * 0.15f, r * 0.15f, col_a(C_YELLOW, 0.9f), 0, 0, seed + 4, 0.1f);
+    if (e->flash > 0.3f) blob(sx, sy, r, r, col_a(WHITE, e->flash * 0.7f), 0, 0, seed, 0.1f);
 }
 
-static void draw_shield(const Game *g, const Enemy *e, Xf *t)
+static void draw_shield(const Game *g, const Enemy *e, Xf *t, uint32_t seed)
 {
-    const EnemyStats *s = &ESTAT[EN_SHIELD];
-    /* a hexagonal crystal prism pointing outward from the core */
-    xquad(t, -18, -9, 12, -9, 12, 0, -18, 0, s->c_light);
-    xquad(t, -18, 0, 12, 0, 12, 9, -18, 9, s->c_mid);
-    xtri(t, 12, -9, 26, 0, 12, 0, WHITE);
-    xtri(t, 12, 0, 26, 0, 12, 9, s->c_light);
-    xtri(t, -18, -9, -26, 0, -18, 0, s->c_mid);
-    xtri(t, -18, 0, -26, 0, -18, 9, s->c_dark);
-    gfx_blend(BL_ADD);
-    gfx_glow_cheap(t->x, t->y, 34.0f, col_a(s->c_light, 0.35f + 0.15f * sinf(g->time * 4.0f + (float)e->idx)));
-    gfx_blend(BL_ALPHA);
+    static const float D[4][2] = {{0, -15}, {11, 0}, {0, 15}, {-11, 0}};
+    t->c = 1; t->s = 0;
+    shape(t, D, 4, 0x9FE8FFFFu, INK, 2.2f, seed);
+    xline(t, 0, -15, 0, 15, 1.4f, INK, seed + 1);
+    xline(t, -4, -5, -2, -9, 1.8f, WHITE, seed + 2);
+    (void)g;
+    if (e->flash > 0.3f) blob(t->x, t->y, 11, 14, col_a(WHITE, e->flash * 0.7f), 0, 0, seed, 0.1f);
 }
 
-static void draw_boss(const Game *g, const Enemy *e, Xf *t)
+static void draw_boss(const Game *g, const Enemy *e, float sx, float sy, float sc, uint32_t seed)
 {
-    const EnemyStats *s = &ESTAT[EN_BOSS];
     int phase2 = e->hp < e->maxhp * 0.5f;
-    uint32_t lt = phase2 ? 0xFF7BCBFFu : s->c_light, md = phase2 ? 0xD8358FFFu : s->c_mid, dk = phase2 ? 0x8A1458FFu : s->c_dark;
-    float R = 64.0f, Ri = 38.0f;
-    float spin = e->t * 0.4f;
-    /* energy tethers to the shields */
-    gfx_blend(BL_ADD);
+    float R = 64.0f * sc, spin = e->t * 0.4f;
+    /* dotted tethers to the shields */
     for (int k = 0; k < MAX_EN; k++) {
         const Enemy *o = &g->en[k];
         if (!o->alive || o->type != EN_SHIELD || o->parent != (int)(e - g->en) || o->warp) continue;
         float ox = sxof(g, o->x), oy = o->y;
-        gfx_glowline(t->x, t->y, ox, oy, 10.0f, col_a(0x9FF7FFFFu, 0.25f + 0.15f * sinf(g->time * 9.0f + (float)k)));
+        for (int d = 1; d < 8; d += 2) {
+            float a = (float)d / 9.0f, b = (float)(d + 1) / 9.0f;
+            pen_line(sx + (ox - sx) * a, sy + (oy - sy) * a, sx + (ox - sx) * b, sy + (oy - sy) * b, 2.0f, col_a(INK, 0.7f), seed + (uint32_t)(k * 9 + d), 0.2f);
+        }
     }
-    gfx_glow(t->x, t->y, 190.0f, col_a(phase2 ? 0xFF3C9CFFu : 0x9A6BFFFFu, 0.2f));
-    gfx_blend(BL_ALPHA);
-    /* spikes on the corners */
-    for (int k = 0; k < 6; k++) {
+    for (int k = 0; k < 6; k++) {                                          /* spikes */
         float a = spin + TAU * (float)k / 6.0f;
-        float ca = cosf(a), sa = sinf(a);
-        float pa = cosf(a + 0.16f), pb = sinf(a + 0.16f), qa = cosf(a - 0.16f), qb = sinf(a - 0.16f);
-        xtri(t, pa * R, pb * R, ca * (R + 24.0f), sa * (R + 24.0f), qa * R, qb * R, (k & 1) ? s->c_accent : 0xFFE070FFu);
+        Poly p; poly_clear(&p);
+        poly_add(&p, sx + cosf(a - 0.2f) * R * 0.92f, sy + sinf(a - 0.2f) * R * 0.92f);
+        poly_add(&p, sx + cosf(a) * (R + 30.0f * sc), sy + sinf(a) * (R + 30.0f * sc));
+        poly_add(&p, sx + cosf(a + 0.2f) * R * 0.92f, sy + sinf(a + 0.2f) * R * 0.92f);
+        gfx_uv(sx, sy, 128, 0, 0);
+        crayon_fill(&p, (k & 1) ? C_PINK : C_SKY);
+        pen_poly(&p, 1, 2.2f, INK, seed + 40u + (uint32_t)k, 0.5f);
     }
-    /* faceted outer hexagon */
+    Poly hx; poly_clear(&hx);
     for (int k = 0; k < 6; k++) {
-        float a0 = spin + TAU * (float)k / 6.0f, a1 = a0 + TAU / 6.0f;
-        float lit = clampf(0.5f - 0.5f * sinf((a0 + a1) * 0.5f + 0.7f), 0, 1);
-        uint32_t c = col_mix(dk, lt, lit);
-        float c0 = cosf(a0), s0 = sinf(a0), c1 = cosf(a1), s1 = sinf(a1);
-        xquad(t, c0 * Ri, s0 * Ri, c0 * R, s0 * R, c1 * R, s1 * R, c1 * Ri, s1 * Ri, c);
-        xtri(t, c0 * R, s0 * R, c1 * R, s1 * R, (c0 + c1) * 0.5f * (R - 9.0f), (s0 + s1) * 0.5f * (R - 9.0f), col_mix(c, WHITE, 0.15f));
-        xtri(t, 0, 0, c0 * Ri, s0 * Ri, c1 * Ri, s1 * Ri, (k & 1) ? 0x2B1066FFu : 0x1E0A4CFFu);
+        float a = spin + TAU * (float)k / 6.0f + TAU / 12.0f;
+        poly_add(&hx, sx + cosf(a) * R, sy + sinf(a) * R);
     }
-    (void)md;
-    /* glowing star core */
-    gfx_blend(BL_ADD);
-    float pulse = 0.7f + 0.3f * sinf(g->time * 6.0f);
-    uint32_t core = phase2 ? 0xFF5090FFu : 0xFF4FD8FFu;
-    for (int k = 0; k < 6; k++) {
-        float a = -e->t * 1.6f + TAU * (float)k / 6.0f;
-        float ca = cosf(a), sa = sinf(a);
-        gfx_tri(t->x, t->y, col_a(WHITE, pulse), t->x + cosf(a - 0.35f) * 12.0f, t->y + sinf(a - 0.35f) * 12.0f, col_a(core, pulse),
-                t->x + ca * 32.0f, t->y + sa * 32.0f, col_a(core, 0.0f));
-        gfx_tri(t->x, t->y, col_a(WHITE, pulse), t->x + ca * 32.0f, t->y + sa * 32.0f, col_a(core, 0.0f),
-                t->x + cosf(a + 0.35f) * 12.0f, t->y + sinf(a + 0.35f) * 12.0f, col_a(core, pulse));
+    gfx_uv(sx, sy, 128, 0, 0);
+    crayon_fill(&hx, phase2 ? 0xFF7A3AFFu : C_YELLOW);
+    pen_poly(&hx, 1, 3.2f, INK, seed, 1.2f);
+    /* the angry face stays upright */
+    Xf t = xf(sx, sy, 0, sc, sc);
+    float lx = sxof(g, g->px), ly = g->py;
+    int squint = e->flash > 0.3f;
+    if (squint) {
+        xline(&t, -32, -10, -14, -6, 3.0f, INK, seed + 1);
+        xline(&t, 32, -10, 14, -6, 3.0f, INK, seed + 2);
+    } else {
+        eye(&t, -22, -8, 12.0f, lx, ly, seed + 3);
+        eye(&t, 22, -8, 12.0f, lx, ly, seed + 4);
     }
-    gfx_glow(t->x, t->y, 60.0f, col_a(core, 0.6f * pulse));
-    if (e->flash > 0) gfx_glow(t->x, t->y, 90.0f, col_a(WHITE, e->flash * 0.6f));
-    gfx_blend(BL_ALPHA);
+    xline(&t, -38, -28, -8, -18, 4.0f, INK, seed + 5);                         /* big angry brows */
+    xline(&t, 38, -28, 8, -18, 4.0f, INK, seed + 6);
+    static const float MOUTH[6][2] = {{-26, 14}, {26, 14}, {22, 30}, {8, 34}, {-8, 34}, {-22, 30}};
+    shape(&t, MOUTH, 6, INK, INK, 2.0f, seed + 7);
+    for (int k = 0; k < 5; k++) {                                             /* zig-zag teeth */
+        float x0 = -24.0f + (float)k * 10.0f;
+        float T1[3][2] = {{x0, 14}, {x0 + 10, 14}, {x0 + 5, 22}};
+        shape(&t, (const float (*)[2])T1, 3, WHITE, INK, 1.2f, seed + 10u + (uint32_t)k);
+    }
+    if (phase2) {                                                             /* steam puffs from the ears */
+        for (int k = 0; k < 2; k++) {
+            float side = k ? 1.0f : -1.0f, ph = posmod(g->time * 1.4f + (float)k * 0.5f, 1.0f);
+            blob(sx + side * (R + 8.0f + ph * 18.0f), sy - 30.0f - ph * 30.0f, 6.0f + ph * 8.0f, 5.0f + ph * 7.0f, col_a(WHITE, 1.0f - ph), col_a(C_GREY, 1.0f - ph), 1.6f, seed + 60u + (uint32_t)k, 0.15f);
+        }
+    }
 }
 
 static void draw_warp(const Game *g, const Enemy *e, float sx, float sy)
 {
     if (e->warp_t < 0) return;
     float p = e->warp_t / 0.7f;
-    float big = e->type == EN_BOSS ? 4.0f : (e->type == EN_SERPENT || e->type == EN_SPORE ? 1.6f : 1.0f);
-    gfx_blend(BL_ADD);
-    for (int k = 0; k < 3; k++) {
-        float q = clampf(p * 1.3f - 0.15f * (float)k, 0, 1);
-        float r = (1.0f - q) * 60.0f * big + 10.0f * big;
-        uint32_t c = col_a(k == 1 ? 0xFF4FA0FFu : 0xFF6A50FFu, q * (1.0f - q) * 3.0f);
-        gfx_ring(sx, sy, r, 3.0f + 2.0f * big, 4, g->time * 2.0f * (k & 1 ? 1.0f : -1.0f) + 0.785f, c);
+    float big = e->type == EN_BOSS ? 3.5f : (e->type == EN_SERPENT || e->type == EN_SPORE ? 1.5f : 1.0f);
+    for (int k = 0; k < 2; k++) {                                              /* orange diamonds closing in */
+        float q = clampf(p * 1.25f - 0.2f * (float)k, 0, 1);
+        if (q <= 0 || q >= 1) continue;
+        float r = ((1.0f - q) * 46.0f + 12.0f) * big;
+        Poly d; poly_clear(&d);
+        poly_add(&d, sx, sy - r); poly_add(&d, sx + r, sy); poly_add(&d, sx, sy + r); poly_add(&d, sx - r, sy);
+        pen_poly(&d, 1, 3.0f, 0xF06A3AFFu, (uint32_t)(e - g->en) * 7u + (uint32_t)k, 0.8f);
     }
-    gfx_glow(sx, sy, 20.0f * big + 40.0f * big * p, col_a(ESTAT[e->type].c_light, 0.5f * p));
-    if (p > 0.85f) gfx_glow(sx, sy, 50.0f * big, col_a(WHITE, (p - 0.85f) / 0.15f));
-    gfx_blend(BL_ALPHA);
 }
 
 static void draw_enemies(const Game *g)
 {
-    /* serpents: draw tail first so the head sits on top */
     for (int pass = 0; pass < 2; pass++) {
         for (int i = MAX_EN - 1; i >= 0; i--) {
             const Enemy *e = &g->en[i];
             if (!e->alive) continue;
-            int is_seg = e->type == EN_SEG;
-            if ((pass == 0) != is_seg) continue;
+            if ((pass == 0) != (e->type == EN_SEG)) continue;
             float sx = sxof(g, e->x), sy = e->y;
-            float cull = e->type == EN_BOSS ? 260.0f : 60.0f;
-            if (!on_screen(sx, sy, cull)) continue;
+            if (!on_screen(sx, sy, e->type == EN_BOSS ? 160.0f : 60.0f)) continue;
             if (e->warp) {
                 draw_warp(g, e, sx, sy);
                 if (e->warp_t / 0.7f < 0.6f) continue;
             }
-            float sc = e->warp ? (e->warp_t / 0.7f - 0.6f) / 0.4f : 1.0f;
-            float ang = e->ang;
-            if (e->type == EN_SPORE || e->type == EN_BOSS) ang = 0;
-            Xf t = xf(sx, sy, ang, sc, sc);
-            t.flash = e->flash;
+            float sc = 1.0f;
+            if (e->warp) {                                                      /* pops in with a boing */
+                float q = (e->warp_t / 0.7f - 0.6f) / 0.4f;
+                sc = q < 0.7f ? q / 0.7f * 1.2f : 1.2f - (q - 0.7f) / 0.3f * 0.2f;
+            }
+            uint32_t seed = (uint32_t)i * 977u + 13u;
+            Xf t = xf(sx, sy, e->ang, sc, sc);
             switch (e->type) {
-            case EN_SHARD:   draw_shard(e, &t); break;
-            case EN_ZIP:
-                gfx_blend(BL_ADD);
-                gfx_capsule(sx, sy, e->vx, e->vy, 34.0f, 10.0f, col_a(ESTAT[EN_ZIP].c_light, 0.45f));
-                gfx_blend(BL_ALPHA);
-                draw_zip(e, &t);
-                break;
-            case EN_SPORE:   draw_spore(g, e, &t); break;
-            case EN_SERPENT: draw_serpent_head(g, e, &t); break;
-            case EN_SEG:     draw_segment(e, &t); break;
-            case EN_BOSS:    draw_boss(g, e, &t); break;
-            case EN_SHIELD:  draw_shield(g, e, &t); break;
+            case EN_SHARD:   draw_shard(g, e, &t, seed); break;
+            case EN_ZIP:     draw_zip(g, e, &t, seed); break;
+            case EN_SPORE:   draw_spore(g, e, sx, sy, sc, seed); break;
+            case EN_SERPENT: draw_serpent_head(g, e, sx, sy, sc, seed); break;
+            case EN_SEG:     draw_segment(g, e, sx, sy, sc, seed); break;
+            case EN_BOSS:    draw_boss(g, e, sx, sy, sc, seed); break;
+            case EN_SHIELD:  draw_shield(g, e, &t, seed); break;
             default: break;
             }
         }
@@ -662,7 +595,6 @@ static void draw_enemies(const Game *g)
 
 static void draw_offscreen_markers(const Game *g)
 {
-    gfx_blend(BL_ADD);
     for (int i = 0; i < MAX_EN; i++) {
         const Enemy *e = &g->en[i];
         if (!e->alive || e->type == EN_SEG || e->type == EN_SHIELD) continue;
@@ -671,174 +603,178 @@ static void draw_offscreen_markers(const Game *g)
         if (sx > -10.0f && sx < VW + 10.0f) continue;
         float d = fabsf(sx - VW * 0.5f) - VW * 0.5f;
         if (d > 900.0f) continue;
-        float a = clampf(1.0f - d / 900.0f, 0.15f, 1.0f);
-        float y = clampf(e->y, 70.0f, 410.0f);
+        float y = clampf(e->y, 80.0f, 400.0f);
         int right = sx > VW * 0.5f;
-        float x = right ? VW - 14.0f : 14.0f, dir = right ? 1.0f : -1.0f;
-        if (e->warp) {                                     /* incoming: blinking warning triangle */
-            if ((int)(g->time * 8.0f) & 1) continue;
-            float tx = x - dir * 6.0f;
-            gfx_tri1(tx, y - 12, tx + 11, y + 8, tx - 11, y + 8, col_a(0xFF4060FFu, a));
-            gfx_tri1(tx, y - 7, tx + 6, y + 5, tx - 6, y + 5, 0x40081AFFu);
-            gfx_rect(tx - 1, y - 3, 2, 4, col_a(WHITE, a));
-            gfx_rect(tx - 1, y + 2, 2, 2, col_a(WHITE, a));
+        float x = right ? VW - 20.0f : 20.0f, dir = right ? 1.0f : -1.0f;
+        uint32_t seed = (uint32_t)i * 31u + (uint32_t)boil;
+        if (e->warp) {
+            if ((int)(g->time * 6.0f) & 1) continue;
+            gfx_text_fancy("!", x - dir * 4.0f, y - 16.0f, 30.0f, C_RED, PAPER, 2.0f, 0, 0);
         } else {
-            uint32_t c = col_a(e->type == EN_BOSS ? 0xFF4FD8FFu : 0xFF5F7AFFu, a);
-            gfx_tri1(x + dir * 8.0f, y, x - dir * 6.0f, y - 9.0f, x - dir * 6.0f, y + 9.0f, c);
-            gfx_glow_cheap(x, y, 20.0f, col_a(c, 0.3f * a));
+            Poly a; poly_clear(&a);
+            poly_add(&a, x + dir * 10.0f, y); poly_add(&a, x - dir * 6.0f, y - 10.0f); poly_add(&a, x - dir * 6.0f, y + 10.0f);
+            gfx_uv(x, y, 64, 0, 0);
+            crayon_fill(&a, e->type == EN_BOSS ? C_YELLOW : C_RED);
+            pen_poly(&a, 1, 1.8f, INK, seed, 0.4f);
         }
     }
-    gfx_blend(BL_ALPHA);
 }
 
 /* ------------------------------------------------------------------ */
-/* projectiles, pickups, particles                                      */
+/* shots, pickups, effects                                              */
 /* ------------------------------------------------------------------ */
 static void draw_projectiles(const Game *g)
 {
-    gfx_blend(BL_ADD);
+    static const float PILL[8][2] = {{16, 0}, {12, -5.5f}, {-12, -5.5f}, {-17, -3}, {-17, 3}, {-12, 5.5f}, {12, 5.5f}, {16, 0}};
     for (int i = 0; i < MAX_PB; i++) {
         const Bolt *b = &g->pb[i];
         if (!b->alive) continue;
         float sx = sxof(g, b->x);
         if (!on_screen(sx, b->y, 40)) continue;
-        gfx_glow_cheap(sx, b->y, 48.0f, col_a(COL_A, 0.22f));
-        gfx_capsule(sx, b->y, b->vx, b->vy, 56.0f, 22.0f, col_a(0xFF8A2AFFu, 0.55f));
+        float a = atan2f(b->vy, b->vx);
+        Xf t = xf(sx, b->y, a, 1, 1);
+        xline(&t, -22, -3, -34, -3, 1.6f, C_ORANGE, (uint32_t)i);                     /* motion dashes */
+        xline(&t, -24, 3, -40, 3, 1.6f, C_ORANGE, (uint32_t)i + 1u);
+        shape(&t, PILL, 7, C_ORANGE, INK, 1.8f, 0x900u + (uint32_t)i);
+        xline(&t, -9, -2, 10, -2, 2.4f, C_YELLOW, (uint32_t)i + 2u);
     }
-    gfx_blend(BL_ALPHA);
-    for (int i = 0; i < MAX_PB; i++) {                    /* solid low-poly slug: gold hex prism with a white-hot core */
-        const Bolt *b = &g->pb[i];
-        if (!b->alive) continue;
-        float sx = sxof(g, b->x);
-        if (!on_screen(sx, b->y, 40)) continue;
-        Xf t = xf(sx, b->y, atan2f(b->vy, b->vx), 1, 1);
-        xquad(&t, -16, -6, 6, -6, 6, 0, -16, 0, 0xFFE15AFFu);
-        xquad(&t, -16, 0, 6, 0, 6, 6, -16, 6, 0xFFA21EFFu);
-        xtri(&t, 6, -6, 16, 0, 6, 0, 0xFFF4C0FFu);
-        xtri(&t, 6, 0, 16, 0, 6, 6, 0xFFC23DFFu);
-        xtri(&t, -16, -6, -22, 0, -16, 6, 0xFF7A20FFu);
-        xquad(&t, -12, -2.5f, 10, -2.5f, 10, 2.5f, -12, 2.5f, WHITE);
-    }
-    gfx_blend(BL_ADD);
+    static const float BODY[5][2] = {{9, 0}, {4, -4}, {-8, -4}, {-8, 4}, {4, 4}};
+    static const float FT[3][2] = {{-4, -4}, {-11, -9}, {-9, -3}}, FB[3][2] = {{-4, 4}, {-9, 3}, {-11, 9}};
     for (int i = 0; i < MAX_MS; i++) {
         const Missile *m = &g->ms[i];
         if (!m->alive) continue;
         float sx = sxof(g, m->x);
         if (!on_screen(sx, m->y, 40)) continue;
-        gfx_glow_cheap(sx, m->y, 40.0f, col_a(COL_X, 0.55f));
-        gfx_capsule(sx, m->y, m->vx, m->vy, 28.0f, 13.0f, col_a(0xFFD15CFFu, 0.9f));
-    }
-    gfx_blend(BL_ALPHA);
-    for (int i = 0; i < MAX_MS; i++) {
-        const Missile *m = &g->ms[i];
-        if (!m->alive) continue;
-        float sx = sxof(g, m->x);
-        if (!on_screen(sx, m->y, 40)) continue;
-        Xf t = xf(sx, m->y, atan2f(m->vy, m->vx), 1, 1);   /* chunky rocket: body, nose cone, fins */
-        xquad(&t, -9, -4.5f, 6, -4.5f, 6, 0, -9, 0, 0xFF7ABCFFu);
-        xquad(&t, -9, 0, 6, 0, 6, 4.5f, -9, 4.5f, 0xD82E7EFFu);
-        xtri(&t, 6, -4.5f, 15, 0, 6, 0, WHITE);
-        xtri(&t, 6, 0, 15, 0, 6, 4.5f, 0xFFC8E4FFu);
-        xtri(&t, -9, -4.5f, -14, -9, -4, -4.5f, 0xFFD15CFFu);
-        xtri(&t, -9, 4.5f, -4, 4.5f, -14, 9, 0xE5A020FFu);
+        Xf t = xf(sx, m->y, atan2f(m->vy, m->vx), 1.25f, 1.25f);
+        uint32_t seed = 0xA00u + (uint32_t)i * 11u;
+        shape(&t, FT, 3, C_YELLOW, INK, 1.4f, seed);
+        shape(&t, FB, 3, C_YELLOW, INK, 1.4f, seed + 1);
+        shape(&t, BODY, 5, C_RED, INK, 1.8f, seed + 2);
     }
 }
 
 static void draw_ebullets(const Game *g)
 {
-    gfx_blend(BL_ADD);
     for (int i = 0; i < MAX_EB; i++) {
         const EBullet *b = &g->eb[i];
         if (!b->alive) continue;
-        float sx = sxof(g, b->x);
-        if (!on_screen(sx, b->y, 30)) continue;
-        float r = b->big ? 12.0f : 9.5f;
-        gfx_glow_cheap(sx, b->y, r * 3.2f, col_a(0xFF3F9AFFu, 0.5f));
-        gfx_capsule(sx, b->y, b->vx, b->vy, r * 2.2f, r * 1.6f, col_a(0xFF5FA8FFu, 0.7f));
-    }
-    gfx_blend(BL_ALPHA);
-    for (int i = 0; i < MAX_EB; i++) {
-        const EBullet *b = &g->eb[i];
-        if (!b->alive) continue;
-        float sx = sxof(g, b->x);
-        if (!on_screen(sx, b->y, 30)) continue;
+        float sx = sxof(g, b->x), sy = b->y;
+        if (!on_screen(sx, sy, 30)) continue;
         float r = b->big ? 9.5f : 7.5f;
-        float a = atan2f(b->vy, b->vx);
-        Xf t = xf(sx, b->y, a, 1, 1);
-        xquad(&t, -r * 1.4f, -r * 0.8f, r * 0.6f, -r, r * 0.6f, r, -r * 1.4f, r * 0.8f, 0xFF4F9AFFu);   /* pink pill */
-        xtri(&t, r * 0.6f, -r, r * 1.3f, 0, r * 0.6f, r, 0xFF4F9AFFu);
-        xquad(&t, -r * 0.8f, -r * 0.35f, r * 0.7f, -r * 0.4f, r * 0.7f, r * 0.4f, -r * 0.8f, r * 0.35f, 0xFFE8F4FFu);
+        float sp = sqrtf(b->vx * b->vx + b->vy * b->vy) + 0.01f, ux = b->vx / sp, uy = b->vy / sp;
+        uint32_t seed = 0xE00u + (uint32_t)i * 7u;
+        for (int k = -1; k <= 1; k += 2)                                   /* whoosh lines */
+            pen_line(sx - ux * (r + 2) - uy * k * r * 0.5f, sy - uy * (r + 2) + ux * k * r * 0.5f,
+                     sx - ux * (r + 12) - uy * k * r * 0.5f, sy - uy * (r + 12) + ux * k * r * 0.5f, 1.4f, C_RED, seed + (uint32_t)(k + 1), 0.2f);
+        blob(sx, sy, r, r, 0xFF4A55FFu, INK, 1.8f, seed, 0.06f);
+        blob(sx - r * 0.3f, sy - r * 0.35f, r * 0.28f, r * 0.22f, WHITE, 0, 0, seed + 3, 0.1f);
     }
+}
+
+static void heart(float cx, float cy, float s, uint32_t fill, uint32_t seed)
+{
+    Poly p; poly_clear(&p);
+    for (int k = 0; k < 20; k++) {
+        float a = TAU * (float)k / 20.0f;
+        float x = 16.0f * powf(sinf(a), 3.0f);
+        float y = -(13.0f * cosf(a) - 5.0f * cosf(2 * a) - 2.0f * cosf(3 * a) - cosf(4 * a));
+        poly_add(&p, cx + x * s / 16.0f, cy + y * s / 16.0f);
+    }
+    gfx_uv(cx, cy, 64, (float)(seed & 15) / 16.0f, 0);
+    crayon_fill(&p, fill);
+    pen_poly(&p, 1, 1.8f, INK, seed, 0.5f);
 }
 
 static void draw_crystals(const Game *g)
 {
-    gfx_blend(BL_ADD);
     for (int i = 0; i < MAX_CRY; i++) {
         const Crystal *c = &g->cr[i];
         if (!c->alive) continue;
         float sx = sxof(g, c->x);
         if (!on_screen(sx, c->y, 30)) continue;
         if (c->life < 2.0f && ((int)(c->life * 10.0f) & 1)) continue;
-        gfx_glow_cheap(sx, c->y, c->kind ? 30.0f : 18.0f, col_a(c->kind ? 0x6BFF8AFFu : 0xFFD24DFFu, 0.45f));
-    }
-    gfx_blend(BL_ALPHA);
-    for (int i = 0; i < MAX_CRY; i++) {
-        const Crystal *c = &g->cr[i];
-        if (!c->alive) continue;
-        float sx = sxof(g, c->x);
-        if (!on_screen(sx, c->y, 30)) continue;
-        if (c->life < 2.0f && ((int)(c->life * 10.0f) & 1)) continue;
+        uint32_t seed = 0xC00u + (uint32_t)i * 5u;
         if (c->kind == 0) {
-            float w = 7.0f * fabsf(cosf(c->spin)) + 1.5f, h = 9.0f;
-            uint32_t a = cosf(c->spin) > 0 ? 0xFFE580FFu : 0xF2A81CFFu, b = cosf(c->spin) > 0 ? 0xF2A81CFFu : 0xFFE580FFu;
-            gfx_tri1(sx, c->y - h, sx - w, c->y, sx, c->y, a);
-            gfx_tri1(sx, c->y - h, sx, c->y, sx + w, c->y, col_mix(a, WHITE, 0.4f));
-            gfx_tri1(sx - w, c->y, sx, c->y + h, sx, c->y, b);
-            gfx_tri1(sx, c->y, sx, c->y + h, sx + w, c->y, col_mix(b, 0x803000FFu, 0.3f));
+            float w = 7.5f * fabsf(cosf(c->spin)) + 2.0f, h = 9.5f;
+            Poly p; poly_clear(&p);
+            poly_add(&p, sx, c->y - h); poly_add(&p, sx + w, c->y); poly_add(&p, sx, c->y + h); poly_add(&p, sx - w, c->y);
+            gfx_uv(sx, c->y, 64, 0, 0);
+            crayon_fill(&p, C_YELLOW);
+            pen_poly(&p, 1, 1.6f, INK, seed, 0.4f);
         } else {
-            float bob = sinf(g->time * 4.0f) * 2.0f;
-            gfx_poly(sx, c->y + bob, 13.0f, 6, PI_F / 6.0f, 0x1E8C4AFFu);
-            gfx_poly(sx, c->y + bob, 10.0f, 6, PI_F / 6.0f, 0x3EE07AFFu);
-            gfx_rect(sx - 6, c->y + bob - 2, 12, 4, WHITE);
-            gfx_rect(sx - 2, c->y + bob - 6, 4, 12, WHITE);
+            float bob = sinf(g->time * 4.0f) * 2.5f, pulse = 1.0f + 0.08f * sinf(g->time * 9.0f);
+            heart(sx, c->y + bob, 15.0f * pulse, C_RED, seed);
+            gfx_text_fancy("+", sx + 14.0f, c->y + bob - 28.0f, 22.0f, C_GREEN, INK, 1.4f, 0, 0);
         }
     }
 }
 
-static void draw_particles(const Game *g, int additive)
+/* kid-style explosion: a jagged starburst that pops out and shrinks away */
+static void starburst(float x, float y, float r, float rot, uint32_t outer, uint32_t inner, uint32_t seed)
 {
+    Poly p; poly_clear(&p);
+    for (int k = 0; k < 18; k++) {
+        float a = rot + TAU * (float)k / 18.0f, rr = (k & 1) ? r * (0.5f + 0.1f * noise1(seed, (float)k)) : r * (1.0f + 0.12f * noise1(seed + 3, (float)k));
+        poly_add(&p, x + cosf(a) * rr, y + sinf(a) * rr);
+    }
+    gfx_uv(x, y, 128, 0, 0);
+    crayon_fill(&p, outer);
+    pen_poly(&p, 1, 2.2f, INK, seed, 0.4f);
+    if (inner & 255) {
+        Poly q; poly_clear(&q);
+        for (int k = 0; k < 12; k++) {
+            float a = rot + 0.3f + TAU * (float)k / 12.0f, rr = (k & 1) ? r * 0.25f : r * 0.52f;
+            poly_add(&q, x + cosf(a) * rr, y + sinf(a) * rr);
+        }
+        crayon_fill(&q, inner);
+    }
+}
+
+static void draw_particles(const Game *g)
+{
+    int bursts = 0, debris = 0;
     for (int i = 0; i < MAX_PT; i++) {
         const Part *p = &g->pt[i];
         if (!p->alive) continue;
-        int add = p->kind == P_SPARK || p->kind == P_GLOW || p->kind == P_STAR;
-        if (add != additive) continue;
         float sx = sxof(g, p->x);
         if (!on_screen(sx, p->y, p->size + 40.0f)) continue;
         float t = p->life / p->max_life;                    /* 1 -> 0 */
+        uint32_t seed = (uint32_t)i * 37u + 3u;
         switch (p->kind) {
         case P_SPARK: {
-            float l = 0.035f;
-            gfx_line(sx, p->y, sx - p->vx * l, p->y - p->vy * l, p->size * (0.4f + 0.6f * t), col_a(p->col, t), col_a(p->col, 0.0f));
+            float l = 0.03f, w = 1.4f + p->size * 0.35f * t;
+            uint32_t c = col_mix(p->col, INK, 0.25f);
+            if ((p->col & 0xFFFFFF00u) == 0xFFFFFF00u) c = INK;
+            gfx_tex(TEX_SOLID);
+            gfx_line(sx, p->y, sx - p->vx * l, p->y - p->vy * l, w, c, c);
             break;
         }
-        case P_GLOW:
-            gfx_glow_cheap(sx, p->y, p->size * (0.5f + 0.5f * t), col_a(p->col, t));
+        case P_GLOW: {
+            if ((p->col & 255) < 140 || bursts >= 36) break;   /* soft light isn't drawn - no lights in a drawing */
+            bursts++;
+            float age = 1.0f - t, pop = age < 0.25f ? 0.6f + age / 0.25f * 0.6f : 1.2f - (age - 0.25f) / 0.75f * 0.9f;
+            float r = p->size * 0.5f * pop;
+            if (r < 3.0f) break;
+            starburst(sx, p->y, r, hf(seed) * TAU, r > 18.0f ? WHITE : C_YELLOW, r > 18.0f ? C_YELLOW : 0, seed);
             break;
+        }
         case P_DEBRIS: {
             Xf x = xf(sx, p->y, p->rot, p->size, p->size);
-            x.alpha = clampf(t * 2.5f, 0, 1);
-            xtri(&x, 1.0f, 0, -0.6f, -0.8f, -0.4f, 0.9f, p->col);
-            xtri(&x, 1.0f, 0, -0.4f, 0.9f, -0.2f, 0.1f, col_mix(p->col, 0x10001AFFu, 0.35f));
+            static const float D[3][2] = {{1.0f, 0}, {-0.6f, -0.8f}, {-0.4f, 0.9f}};
+            if ((t < 0.25f && ((int)(t * 40.0f) & 1)) || debris >= 70) break;
+            debris++;
+            shape(&x, D, 3, p->col | 255u, INK, 1.4f, seed);
             break;
         }
-        case P_SMOKE:
-            gfx_poly2(sx, p->y, p->size, 6, p->rot, col_a(p->col, t * 0.6f), col_a(p->col, 0.0f));
+        case P_SMOKE:                                   /* every 4th puff, a bit bigger: a cartoon smoke trail */
+            if (i & 3) break;
+            blob(sx, p->y, p->size * 1.3f, p->size * 1.15f, col_a(WHITE, t), col_a(C_GREY, t), 1.4f, seed, 0.15f);
             break;
         case P_CONF: {
             Xf x = xf(sx, p->y, p->rot, p->size, p->size * fabsf(cosf(p->rot * 1.7f)) + 0.5f);
-            x.alpha = clampf(t * 3.0f, 0, 1);
-            xquad(&x, -1, -0.6f, 1, -0.6f, 1, 0.6f, -1, 0.6f, p->col);
+            static const float Q[4][2] = {{-1, -0.6f}, {1, -0.6f}, {1, 0.6f}, {-1, 0.6f}};
+            if (t < 0.3f && ((int)(t * 40.0f) & 1)) break;
+            shape(&x, Q, 4, p->col | 255u, 0, 0, seed);
             break;
         }
         default: break;
@@ -846,206 +782,209 @@ static void draw_particles(const Game *g, int additive)
     }
 }
 
+/* shockwaves become comic-book impact lines: short dashes bursting outward */
 static void draw_rings(const Game *g)
 {
-    gfx_blend(BL_ADD);
     for (int i = 0; i < MAX_RING; i++) {
         const Ring *r = &g->rg[i];
         if (!r->alive) continue;
         float t = r->life / r->max_life;
         float sx = sxof(g, r->x);
         if (!on_screen(sx, r->y, r->r + r->thick)) continue;
-        float th = r->thick * (0.3f + 0.7f * t);
-        gfx_ring2(sx, r->y, r->r, th, 40, 0, col_a(r->col, 0.0f), col_a(r->col, t));
-        gfx_ring2(sx, r->y, r->r + th * 0.5f, th * 0.6f, 40, 0, col_a(r->col, t), col_a(r->col, 0.0f));
+        if ((r->col & 0xFFFFFF00u) == 0xFFFFFF00u) continue;      /* plain white flashes: skip */
+        if (r->maxr > 220.0f && r->maxr < 900.0f && r->r > 180.0f) continue;
+        uint32_t c = col_a(col_mix(r->col | 255u, INK, 0.25f), clampf(t * 2.0f, 0, 1));
+        int n = r->maxr > 150.0f ? 14 : 9;
+        float len = 6.0f + r->thick * 0.9f * t, rot = hf((uint32_t)i * 7u) * TAU;
+        gfx_tex(TEX_SOLID);
+        for (int k = 0; k < n; k++) {
+            float a = rot + TAU * (float)k / (float)n, ca = cosf(a), sa = sinf(a);
+            float r0 = r->r - len * 0.5f, r1 = r->r + len * 0.5f;
+            gfx_line(sx + ca * r0, r->y + sa * r0, sx + ca * r1, r->y + sa * r1, 1.4f + r->thick * 0.18f * t, c, c);
+        }
     }
-    gfx_blend(BL_ALPHA);
 }
 
 /* ------------------------------------------------------------------ */
 /* HUD                                                                  */
 /* ------------------------------------------------------------------ */
-static void shadow_text(const char *s, float x, float y, float px, uint32_t c, int align)
+static void ink_text(const char *s, float x, float y, float size, uint32_t c, int align)
 {
-    float w = gfx_text_width(s, px);
+    float w = gfx_text_width(s, size);
     float lx = align == 0 ? x : (align == 1 ? x - w * 0.5f : x - w);
-    gfx_text(s, lx + px * 0.6f, y + px * 0.6f, px, 0x14051EC0u);
-    gfx_text(s, lx, y, px, c);
+    gfx_text(s, lx, y, size, c);
+}
+/* coloured handwriting with a navy pen rim so it reads on cream paper (navy text gets a paper rim) */
+static void rim_text(const char *s, float x, float y, float size, uint32_t c, int align, float t, float bounce)
+{
+    float w = gfx_text_width(s, size);
+    float cx = align == 0 ? x + w * 0.5f : (align == 1 ? x : x - w * 0.5f);
+    uint32_t rim = (c & 0xFFFFFF00u) == (INK & 0xFFFFFF00u) ? PAPER : col_a(INK, (float)(c & 255) / 255.0f);
+    gfx_text_fancy(s, cx, y, size, c, rim, size * 0.06f, t, bounce);
 }
 
-static void hex_badge(float cx, float cy, float r, uint32_t fill, uint32_t edge)
+static void box(float x, float y, float w, float h, uint32_t fill, uint32_t ink, float pw, uint32_t seed)
 {
-    gfx_poly(cx, cy, r + 3.0f, 6, 0, edge);
-    gfx_poly(cx, cy, r, 6, 0, fill);
+    Poly p; poly_clear(&p);
+    poly_add(&p, x, y); poly_add(&p, x + w, y); poly_add(&p, x + w, y + h); poly_add(&p, x, y + h);
+    gfx_uv(x, y, 128, 0, 0);
+    if (fill & 255) crayon_fill(&p, fill);
+    if (ink & 255) pen_poly(&p, 1, pw, ink, seed, 0.5f);
+}
+
+static void bar(float x, float y, float w, float h, float frac, uint32_t col, uint32_t seed)
+{
+    gfx_tex(TEX_SOLID);
+    gfx_rect(x, y, w, h, col_a(PAPER, 0.95f));
+    if (frac > 0.01f) {
+        Poly f; poly_clear(&f);
+        float fw = w * clampf(frac, 0, 1);
+        poly_add(&f, x + 1, y + 1); poly_add(&f, x + fw - 1, y + 1); poly_add(&f, x + fw - 1, y + h - 1); poly_add(&f, x + 1, y + h - 1);
+        gfx_uv(x, y, 64, 0, 0);
+        crayon_fill(&f, col);
+        crayon_fill(&f, col);
+    }
+    box(x, y, w, h, 0, INK, 1.8f, seed);
+}
+
+static void mini_rocket(float x, float y, float s)
+{
+    Xf t = xf(x, y, 0, s, s);
+    ship_model(&t, 0, 0);
 }
 
 static void draw_minimap(const Game *g)
 {
-    float cx = VW * 0.5f, y0 = 10.0f, w = MINIMAP_W, h = 34.0f;
-    float x0 = cx - w * 0.5f;
-    gfx_rect(x0, y0, w, h, 0x1A0828B0u);
-    /* corner brackets */
-    uint32_t bc = 0xFFFFFFC0u;
-    float b = 8.0f;
-    gfx_rect(x0 - 2, y0 - 2, b, 2, bc); gfx_rect(x0 - 2, y0 - 2, 2, b, bc);
-    gfx_rect(x0 + w - b + 2, y0 - 2, b, 2, bc); gfx_rect(x0 + w, y0 - 2, 2, b, bc);
-    gfx_rect(x0 - 2, y0 + h, b, 2, bc); gfx_rect(x0 - 2, y0 + h - b + 2, 2, b, bc);
-    gfx_rect(x0 + w - b + 2, y0 + h, b, 2, bc); gfx_rect(x0 + w, y0 + h - b + 2, 2, b, bc);
-    float scale = w / g->W;
-    /* the view window */
+    float cx = VW * 0.5f, y0 = 8.0f, w = 250.0f, h = 30.0f, x0 = cx - w * 0.5f;
+    box(x0, y0, w, h, col_a(PAPER, 0.92f), INK, 1.8f, 0x3A9u);
+    gfx_tex(TEX_SOLID);
+    float scale = (w - 8.0f) / g->W;
     float vw = VW * scale, vx = cx + wd(g, g->camx - g->px) * scale - vw * 0.5f;
-    gfx_rect(vx, y0 + 2, vw, 2, 0xFFFFFF90u); gfx_rect(vx, y0 + h - 4, vw, 2, 0xFFFFFF90u);
-    gfx_rect(vx, y0 + 2, 2, h - 4, 0xFFFFFF90u); gfx_rect(vx + vw - 2, y0 + 2, 2, h - 4, 0xFFFFFF90u);
+    Poly v; poly_clear(&v);
+    poly_add(&v, vx, y0 + 4); poly_add(&v, vx + vw, y0 + 4); poly_add(&v, vx + vw, y0 + h - 4); poly_add(&v, vx, y0 + h - 4);
+    pen_poly(&v, 1, 1.2f, col_a(INK, 0.6f), 0x3AAu, 0.3f);
     for (int i = 0; i < MAX_EN; i++) {
         const Enemy *e = &g->en[i];
         if (!e->alive || (e->warp && e->warp_t < 0)) continue;
-        float mx = cx + wd(g, e->x - g->px) * scale;
-        float my = y0 + e->y / VH * h;
-        float s = e->type == EN_BOSS ? 6.0f : (e->type == EN_SEG || e->type == EN_SHIELD ? 2.0f : 3.0f);
-        uint32_t c = e->warp ? (((int)(g->time * 10.0f) & 1) ? 0xFFFFFFFFu : 0xFF4060FFu) : (e->type == EN_BOSS ? 0xFF4FD8FFu : 0xFF3A5AFFu);
-        gfx_rect(mx - s * 0.5f, my - s * 0.5f, s, s, c);
+        float mx = cx + wd(g, e->x - g->px) * scale, my = y0 + 3.0f + (e->y - WALL_TOP) / (WALL_BOT - WALL_TOP) * (h - 6.0f);
+        float s = e->type == EN_BOSS ? 4.5f : (e->type == EN_SEG || e->type == EN_SHIELD ? 1.6f : 2.4f);
+        uint32_t c = e->warp ? (((int)(g->time * 10.0f) & 1) ? INK : C_RED) : (e->type == EN_BOSS ? 0xE0A000FFu : C_RED);
+        gfx_quad4(mx - s, my, c, mx, my - s, c, mx + s, my, c, mx, my + s, c);
     }
-    float py = y0 + g->py / VH * h;
-    float f = (float)g->face;
-    gfx_tri1(cx + f * 5.0f, py, cx - f * 4.0f, py - 4.0f, cx - f * 4.0f, py + 4.0f, 0xFFD15CFFu);
-    /* wave pips under the map */
-    for (int k = 0; k < g->L->nwaves; k++) {
-        float px = cx + ((float)k - (float)(g->L->nwaves - 1) * 0.5f) * 14.0f;
-        uint32_t c = k < g->wave ? 0xFFFFFFFFu : (k == g->wave ? 0xFFD15CFFu : 0x7A6090FFu);
-        gfx_poly(px, y0 + h + 10.0f, 4.0f, 4, 0, c);
-    }
+    float py = y0 + 3.0f + (g->py - WALL_TOP) / (WALL_BOT - WALL_TOP) * (h - 6.0f), f = (float)g->face;
+    gfx_tri1(cx + f * 6.0f, py, cx - f * 5.0f, py - 4.5f, cx - f * 5.0f, py + 4.5f, C_ORANGE);
 }
 
-static void draw_weapon_icon(int w, float cx, float cy, uint32_t c)
+static void weapon_icon(int w, float cx, float cy, float time)
 {
     switch (w) {
-    case 0:   /* blaster: twin dashes */
-        gfx_rect(cx - 8, cy - 5, 14, 3, c); gfx_rect(cx - 4, cy + 2, 14, 3, c); break;
-    case 1:   /* blade: two crossed sabres */
-        gfx_line(cx - 9, cy + 7, cx + 9, cy - 7, 3.0f, c, c); gfx_line(cx - 9, cy - 7, cx + 9, cy + 7, 3.0f, c, c);
-        gfx_poly(cx, cy, 4.0f, 4, 0, c); break;
-    case 2:   /* missiles: three darts */
-        for (int k = -1; k <= 1; k++) gfx_tri1(cx + 7, cy + (float)k * 6.0f, cx - 5, cy + (float)k * 6.0f - 3.0f, cx - 5, cy + (float)k * 6.0f + 3.0f, c);
+    case 0: {
+        static const float PILL[6][2] = {{9, 0}, {6, -3.5f}, {-8, -3.5f}, {-10, 0}, {-8, 3.5f}, {6, 3.5f}};
+        Xf t = xf(cx + 2, cy - 5, 0, 1, 1); shape(&t, PILL, 6, C_ORANGE, INK, 1.4f, 0x401u);
+        t = xf(cx - 2, cy + 5, 0, 1, 1); shape(&t, PILL, 6, C_ORANGE, INK, 1.4f, 0x402u);
         break;
-    default:  /* lance: long beam */
-        gfx_rect(cx - 10, cy - 2.5f, 20, 5, c); gfx_tri1(cx + 10, cy - 5, cx + 14, cy, cx + 10, cy + 5, c); break;
     }
+    case 1: {
+        Poly p; poly_clear(&p);
+        for (int i = 0; i <= 8; i++) { float a = -2.6f + 2.4f * (float)i / 8; poly_add(&p, cx + cosf(a) * 12.0f, cy + sinf(a) * 12.0f); }
+        for (int i = 8; i >= 0; i--) { float a = -2.6f + 2.4f * (float)i / 8; poly_add(&p, cx + cosf(a) * (6.0f + 2.0f * (float)i / 8), cy + sinf(a) * (6.0f + 2.0f * (float)i / 8)); }
+        gfx_uv(cx, cy, 64, 0, 0); crayon_fill(&p, C_MINT); pen_poly(&p, 1, 1.4f, INK, 0x403u, 0.3f);
+        break;
+    }
+    case 2: {
+        static const float BODY[5][2] = {{9, 0}, {4, -4}, {-8, -4}, {-8, 4}, {4, 4}};
+        Xf t = xf(cx, cy, -0.6f, 1.2f, 1.2f); shape(&t, BODY, 5, C_RED, INK, 1.4f, 0x404u);
+        pen_line(cx - 9, cy + 9, cx - 14, cy + 13, 1.4f, C_ORANGE, 0x405u, 0.2f);
+        break;
+    }
+    default:
+        box(cx - 13, cy - 4, 26, 8, C_SKY, INK, 1.4f, 0x406u);
+        break;
+    }
+    (void)time;
 }
 
-static void draw_weapon_pad(const Game *g)
+static void draw_weapon_boxes(const Game *g)
 {
-    /* Classic Controller layout: X top, A right, B bottom, Y left */
-    static const float POS[4][2] = { {30, 0}, {0, 30}, {0, -30}, {-30, 0} };   /* A B X Y */
     static const char *KEY[4] = {"A", "B", "X", "Y"};
-    static const uint32_t COL[4] = {COL_A, COL_B, COL_X, COL_Y};
     static const float COST[4] = {0, COST_BLADE, COST_MISSILE, COST_LANCE};
-    float cx = VW - 82.0f, cy = VH - 64.0f;
     for (int w = 0; w < 4; w++) {
-        float x = cx + POS[w][0], y = cy + POS[w][1];
+        float x = 20.0f + (float)w * 50.0f, y = 418.0f;
         int ready = w == 0 ? !g->overheat : g->energy >= COST[w];
-        float fl = g->wpn_flash[w];
-        float s = 20.0f + fl * 3.0f;
-        uint32_t edge = ready ? col_mix(COL[w], WHITE, fl * 0.6f) : 0x6A5070FFu;
-        uint32_t fill = ready ? col_mix(0x22102EE0u, COL[w], 0.18f + fl * 0.3f) : 0x1A0A22D0u;
-        if (g->empty_t > 0 && (int)g->empty_wpn == w && ((int)(g->time * 20.0f) & 1)) edge = 0xFF3040FFu;
-        gfx_poly(x, y, s + 3.0f, 4, 0, edge);
-        gfx_poly(x, y, s, 4, 0, fill);
-        draw_weapon_icon(w, x, y - 1.0f, ready ? COL[w] : 0x7A6488FFu);
-        gfx_text(KEY[w], x + s * 0.35f, y + s * 0.2f, 1.5f, ready ? WHITE : 0x9A88A8FFu);
-        if (fl > 0) {
-            gfx_blend(BL_ADD);
-            gfx_glow_cheap(x, y, 34.0f, col_a(COL[w], fl * 0.6f));
-            gfx_blend(BL_ALPHA);
-        }
+        float fl = g->wpn_flash[w], bounce = fl * 3.0f;
+        int bad = g->empty_t > 0 && (int)g->empty_wpn == w;
+        box(x, y - bounce, 42, 40, col_a(ready ? PAPER : 0xD8D0C0FFu, 0.96f), bad && ((int)(g->time * 16.0f) & 1) ? C_RED : INK, 2.0f, 0x410u + (uint32_t)w);
+        weapon_icon(w, x + 21.0f, y + 17.0f - bounce, g->time);
+        ink_text(KEY[w], x + 3.0f, y + 21.0f - bounce, 14.0f, INK, 0);
+        if (!ready) pen_line(x + 4, y + 36 - bounce, x + 38, y + 4 - bounce, 2.2f, col_a(C_RED, 0.85f), 0x420u + (uint32_t)w, 0.6f);
     }
 }
 
 static void draw_hud(const Game *g)
 {
     char buf[48];
-    /* ---- top left: wave + level ---- */
-    if (g->wave < g->L->nwaves) snprintf(buf, sizeof buf, "WAVE %d/%d", g->wave + 1, g->L->nwaves);
-    else snprintf(buf, sizeof buf, "CLEAR!");
-    shadow_text(buf, 22, 16, 2.5f, WHITE, 0);
-    shadow_text(g->L->name, 22, 40, 1.5f, 0xD8B8F0FFu, 0);
+    /* hearts = shields, little rockets = lives */
+    for (int k = 0; k < SHIELDS_MAX; k++) {
+        float x = 92.0f + (float)k * 28.0f, y = 18.0f;
+        int on = k < g->shields;
+        float beat = (on && g->shields == 1) ? 1.0f + 0.15f * sinf(g->time * 12.0f) : 1.0f;
+        heart(x, y, 12.0f * beat, on ? C_RED : col_a(PAPER, 0.9f), 0x500u + (uint32_t)k);
+    }
+    mini_rocket(220.0f, 18.0f, 0.45f);
+    snprintf(buf, sizeof buf, "x%d", g->lives);
+    ink_text(buf, 236.0f, 6.0f, 20.0f, INK, 0);
+    if (g->wave < g->L->nwaves) snprintf(buf, sizeof buf, "Wave %d of %d", g->wave + 1, g->L->nwaves);
+    else snprintf(buf, sizeof buf, "All clear!");
+    ink_text(buf, 80.0f, 34.0f, 17.0f, col_a(PAPER, 0.0f), 0);
+    rim_text(buf, 82.0f, 36.0f, 17.0f, INK, 0, 0, 0);
 
     draw_minimap(g);
-
-    /* ---- boss bar ---- */
-    if (g->boss >= 0 && g->en[g->boss].alive && !g->en[g->boss].warp) {
-        float w = 300.0f, x = VW * 0.5f - w * 0.5f, y = 70.0f;
-        gfx_quad4(x - 8, y, 0x14051EE0u, x + w + 8, y, 0x14051EE0u, x + w, y + 12, 0x14051EE0u, x, y + 12, 0x14051EE0u);
-        float hp = g->boss_shown_hp, real = g->en[g->boss].hp / g->en[g->boss].maxhp;
-        gfx_rect(x, y + 3, w * hp, 6, 0xFFFFFFC0u);
-        gfx_rect_v(x, y + 3, w * clampf(real, 0, 1), 6, 0xFF7BE0FFu, 0xC0208AFFu);
-        gfx_rect(x + w * 0.5f - 1, y + 1, 2, 10, 0xFFFFFF80u);
-        shadow_text(ESTAT[EN_BOSS].name, VW * 0.5f, y + 16, 1.5f, 0xFF9BE8FFu, 1);
+    /* wave pips under the map */
+    for (int k = 0; k < g->L->nwaves; k++) {
+        float px = VW * 0.5f + ((float)k - (float)(g->L->nwaves - 1) * 0.5f) * 15.0f;
+        blob(px, 48.0f, 4.5f, 4.5f, k < g->wave ? C_GREEN : (k == g->wave ? C_YELLOW : col_a(PAPER, 0.9f)), INK, 1.4f, 0x520u + (uint32_t)k, 0.1f);
     }
 
-    /* ---- top right: score, multiplier, chain ---- */
+    /* boss bar */
+    if (g->boss >= 0 && g->en[g->boss].alive && !g->en[g->boss].warp) {
+        float w = 260.0f, x = VW * 0.5f - w * 0.5f, y = 60.0f;
+        bar(x, y, w, 12.0f, g->en[g->boss].hp / g->en[g->boss].maxhp, C_RED, 0x530u);
+        rim_text(ESTAT[EN_BOSS].name, VW * 0.5f, y + 12.0f, 16.0f, INK, 1, 0, 0);
+    }
+
+    /* score, multiplier, chain */
     long s = g->shown_score;
     if (s > 9999999) s = 9999999;
-    snprintf(buf, sizeof buf, "%07ld", s);
-    int lead = 0;
-    while (lead < 6 && buf[lead] == '0') lead++;
-    float px = 4.0f, w = gfx_text_width(buf, px), x = VW - 22.0f - w;
-    char dim[8];
-    memcpy(dim, buf, (size_t)lead); dim[lead] = 0;
-    gfx_text(dim, x, 14, px, 0x6E5288A0u);
-    shadow_text(buf + lead, x + (float)lead * 6.0f * px, 14, px, WHITE, 0);
-    snprintf(buf, sizeof buf, "%.1fx", (double)g->mult);
-    float mp = 4.0f + g->mult_pulse * 1.5f;
-    uint32_t mc = g->mult >= 10.0f ? col_hsv(g->time * 0.5f, 0.35f, 1.0f, 255) : WHITE;
-    shadow_text(buf, VW - 22.0f, 50 - g->mult_pulse * 4.0f, mp, mc, 2);
+    char num[24];
+    snprintf(num, sizeof num, "%ld", s);
+    int n = (int)strlen(num), o = 0;
+    for (int i = 0; i < n; i++) { if (i > 0 && (n - i) % 3 == 0) buf[o++] = ','; buf[o++] = num[i]; }
+    buf[o] = 0;
+    char line[64];
+    snprintf(line, sizeof line, "Score: %s", buf);
+    ink_text(line, VW - 22.0f, 2.0f, 26.0f, INK, 2);
+    snprintf(buf, sizeof buf, "x%.1f", (double)g->mult);
+    float ms = 30.0f + g->mult_pulse * 10.0f;
+    uint32_t mc = g->mult >= 10.0f ? col_hsv(g->time * 0.5f, 0.75f, 0.95f, 255) : C_ORANGE;
+    rim_text(buf, VW - 22.0f, 34.0f - g->mult_pulse * 4.0f, ms, mc, 2, g->time, g->mult >= 10.0f ? 2.0f : 0.0f);
     if (g->chain >= 2) {
-        snprintf(buf, sizeof buf, "%d HITS", g->chain);
-        shadow_text(buf, VW - 22.0f, 88, 2.5f, 0xFFE070FFu, 2);
-        float cw = 90.0f * clampf(g->chain_t / 2.4f, 0, 1);
-        gfx_rect(VW - 22.0f - cw, 110, cw, 3, 0xFFE070FFu);
+        snprintf(buf, sizeof buf, "%d hits!", g->chain);
+        rim_text(buf, VW - 22.0f, 72.0f, 20.0f, C_RED, 2, 0, 0);
+        float cw = 80.0f * clampf(g->chain_t / 2.4f, 0, 1);
+        pen_line(VW - 22.0f - cw, 98.0f, VW - 22.0f, 98.0f, 2.4f, C_RED, 0x540u, 0.6f);
     }
     if (g->chain_show > 0) {
-        snprintf(buf, sizeof buf, "+%ld", g->chain_bonus);
-        shadow_text(buf, VW - 22.0f, 118, 2.0f, col_a(0xFFFFFFFFu, clampf(g->chain_show, 0, 1)), 2);
+        snprintf(buf, sizeof buf, "+%ld bonus", g->chain_bonus);
+        rim_text(buf, VW - 22.0f, 104.0f, 18.0f, col_a(C_GREEN_D, clampf(g->chain_show, 0, 1)), 2, 0, 0);
     }
 
-    /* ---- bottom left: ship badge, lives, shields ---- */
-    float bx = 50.0f, by = VH - 46.0f;
-    hex_badge(bx, by, 26.0f, 0x2A1238E0u, 0xFFFFFFE0u);
-    Xf t = xf(bx + 1.0f, by + 3.0f, 0, 0.5f, 0.5f);
-    ship_model(&t);
-    snprintf(buf, sizeof buf, "x%d", g->lives);
-    shadow_text(buf, bx + 36, by - 24, 2.5f, WHITE, 0);
-    for (int k = 0; k < SHIELDS_MAX; k++) {
-        float qx = bx + 36.0f + (float)k * 22.0f, qy = by + 4.0f;
-        int on = k < g->shields;
-        uint32_t c = on ? (g->shields == 1 ? (((int)(g->time * 6.0f) & 1) ? 0xFF5050FFu : 0xFFB0B0FFu) : 0x6BE04AFFu) : 0x3A2448FFu;
-        gfx_quad4(qx + 5, qy, 0xFFFFFFE0u, qx + 22, qy, 0xFFFFFFE0u, qx + 17, qy + 14, 0xFFFFFFE0u, qx, qy + 14, 0xFFFFFFE0u);
-        gfx_quad4(qx + 6.5f, qy + 2, c, qx + 19.5f, qy + 2, c, qx + 15.5f, qy + 12, c, qx + 2.5f, qy + 12, c);
-    }
-
-    /* ---- bottom centre: energy + heat ---- */
-    {
-        float w = 300.0f, x = VW * 0.5f - w * 0.5f + 10.0f, y = VH - 44.0f;
-        gfx_quad4(x - 14, y - 4, 0xFFFFFFD0u, x + w + 10, y - 4, 0xFFFFFFD0u, x + w, y + 18, 0xFFFFFFD0u, x - 24, y + 18, 0xFFFFFFD0u);
-        gfx_quad4(x - 12, y - 2, 0x2A1238F0u, x + w + 7, y - 2, 0x2A1238F0u, x + w - 2, y + 16, 0x2A1238F0u, x - 21, y + 16, 0x2A1238F0u);
-        float e = g->energy / ENERGY_MAX;
-        float ew = (w - 8.0f) * e;
-        gfx_quad4(x - 4, y + 2, 0xFFD24DFFu, x - 4 + ew + 6, y + 2, 0xFFD24DFFu, x - 4 + ew, y + 12, 0xF29A1CFFu, x - 10, y + 12, 0xF29A1CFFu);
-        for (int k = 1; k < 10; k++) gfx_rect(x - 4 + (w - 8.0f) * (float)k / 10.0f, y + 2, 1.5f, 10, 0x2A123880u);
-        /* crystal icon */
-        float ix = x - 36, iy = y + 7;
-        gfx_poly(ix, iy, 13, 4, 0, 0xFFFFFFE0u);
-        gfx_poly(ix, iy, 10, 4, 0, 0xF2A81CFFu);
-        gfx_tri1(ix, iy - 10, ix - 10, iy, ix, iy, 0xFFE580FFu);
-        /* heat */
-        float hw = (w - 30.0f) * g->heat;
-        uint32_t hc = g->overheat ? (((int)(g->time * 12.0f) & 1) ? 0xFF3030FFu : 0xFFA030FFu) : col_mix(0xFFC23DFFu, 0xFF3020FFu, g->heat);
-        gfx_rect(x, y - 12, w - 30.0f, 4, 0x2A1238C0u);
-        gfx_rect(x, y - 12, hw, 4, hc);
-        gfx_text("HEAT", x - 32, y - 14, 1.0f, 0xD8B8F0FFu);
-    }
-
-    draw_weapon_pad(g);
+    draw_weapon_boxes(g);
+    /* energy + heat bars */
+    float bx = 232.0f;
+    ink_text("energy", bx, 437.0f, 15.0f, INK, 0);
+    bar(bx + 52.0f, 442.0f, 190.0f, 13.0f, g->energy / ENERGY_MAX, C_YELLOW, 0x550u);
+    ink_text("heat", bx + 8.0f, 418.0f, 15.0f, INK, 0);
+    bar(bx + 52.0f, 423.0f, 190.0f, 9.0f, g->heat, g->overheat ? (((int)(g->time * 10.0f) & 1) ? C_RED : C_ORANGE) : C_ORANGE, 0x551u);
 }
 
 static void draw_popups(const Game *g)
@@ -1054,22 +993,11 @@ static void draw_popups(const Game *g)
         const Popup *p = &g->pp[i];
         if (!p->alive) continue;
         float age = p->max_life - p->life;
-        float pop = age < 0.12f ? 1.0f + (0.12f - age) / 0.12f * 0.8f : 1.0f;
+        float pop = age < 0.12f ? 1.0f + (0.12f - age) / 0.12f * 0.7f : 1.0f;
         float a = clampf(p->life / 0.3f, 0, 1);
-        if (p->big) {
-            float px = 5.0f * pop;
-            float w = gfx_text_width(p->txt, px);
-            gfx_blend(BL_ADD);
-            gfx_rect_v(p->x - w * 0.5f - 30, p->y - 8, w + 60, 25 + 10, col_a(p->col, 0.0f), col_a(p->col, 0.25f * a));
-            gfx_rect_v(p->x - w * 0.5f - 30, p->y + 27, w + 60, 25, col_a(p->col, 0.25f * a), col_a(p->col, 0.0f));
-            gfx_blend(BL_ALPHA);
-            gfx_text_wave(p->txt, p->x + px * 0.7f, p->y + px * 0.7f, px, col_a(0x14051EFFu, a * 0.8f), g->time, 3.0f);
-            gfx_text_wave(p->txt, p->x, p->y, px, col_a(p->col, a), g->time, 3.0f);
-        } else {
-            float px = 2.0f * pop;
-            gfx_text_c(p->txt, p->x + 1.2f, p->y + 1.2f, px, col_a(0x14051EFFu, a * 0.7f));
-            gfx_text_c(p->txt, p->x, p->y, px, col_a(p->col, a));
-        }
+        uint32_t c = col_a(col_mix(p->col | 255u, INK, 0.15f), a);
+        if (p->big) gfx_text_fancy(p->txt, p->x, p->y, 40.0f * pop, c, col_a(INK, a), 2.6f, g->time, 3.0f);
+        else gfx_text_fancy(p->txt, p->x, p->y, 19.0f * pop, c, col_a(INK, a), 1.3f, 0, 0);
     }
 }
 
@@ -1080,20 +1008,15 @@ static void draw_banner(const Game *g)
     float in = clampf((2.6f - t) / 0.3f, 0, 1), out = clampf(t / 0.35f, 0, 1);
     float slide = (1.0f - in) * (1.0f - in) * 500.0f - (1.0f - out) * (1.0f - out) * 500.0f;
     float a = in * out;
-    float y = 180.0f;
+    float y = 170.0f;
     int warn = strcmp(g->banner, "WARNING") == 0;
-    uint32_t c = warn ? (((int)(g->time * 6.0f) & 1) ? 0xFF3050FFu : 0xFFFFFFFFu) : 0xFFFFFFFFu;
-    gfx_blend(BL_ADD);
-    uint32_t bar = warn ? 0xFF2040FFu : 0xB060FFFFu;
-    gfx_rect_v(0, y - 20, VW, 36, col_a(bar, 0.0f), col_a(bar, 0.35f * a));
-    gfx_rect_v(0, y + 16, VW, 36, col_a(bar, 0.35f * a), col_a(bar, 0.0f));
-    gfx_blend(BL_ALPHA);
-    gfx_rect(0, y - 2 + slide * 0.0f, VW, 2, col_a(WHITE, 0.4f * a));
-    gfx_rect(0, y + 36, VW, 2, col_a(WHITE, 0.4f * a));
-    float px = 6.0f;
-    gfx_text_wave(g->banner, VW * 0.5f + slide + 4, y + 4, px, col_a(0x14051EFFu, a), g->time, 2.0f);
-    gfx_text_wave(g->banner, VW * 0.5f + slide, y, px, col_a(c, a), g->time, 2.0f);
-    shadow_text(g->sub, VW * 0.5f - slide * 0.6f, y + 52, 2.0f, col_a(warn ? 0xFFB0C0FFu : 0xD8B8F0FFu, a), 1);
+    uint32_t c = warn ? C_RED : C_YELLOW;
+    gfx_text_fancy(g->banner, VW * 0.5f + slide, y, 64.0f, col_a(c, a), col_a(INK, a), 3.4f, g->time, 3.0f);
+    float w = gfx_text_width(g->banner, 64.0f) * 0.5f;                     /* scribbly underline */
+    Poly u; poly_clear(&u);
+    for (int k = 0; k <= 12; k++) poly_add(&u, VW * 0.5f + slide - w + 2.0f * w * (float)k / 12.0f, y + 70.0f + ((k & 1) ? 3.0f : -3.0f));
+    pen_poly(&u, 0, 3.0f, col_a(warn ? C_RED : C_ORANGE, a), 0x600u + (uint32_t)boil, 0.6f);
+    gfx_text_fancy(g->sub, VW * 0.5f - slide * 0.6f, y + 82.0f, 24.0f, col_a(INK, a), col_a(PAPER, a), 2.0f, 0, 0);
 }
 
 static void draw_boss_card(const Game *g)
@@ -1101,384 +1024,222 @@ static void draw_boss_card(const Game *g)
     if (g->boss_intro <= 0) return;
     float t = g->boss_intro, a = clampf(t / 0.4f, 0, 1) * clampf((2.5f - t) / 0.2f, 0, 1);
     float x = VW * 0.5f + (1.0f - clampf((2.5f - t) / 0.3f, 0, 1)) * -400.0f;
-    gfx_rect(0, 300, VW, 50, col_a(0x14051EFFu, 0.6f * a));
-    gfx_rect(0, 300, VW, 2, col_a(0xFF4FD8FFu, a));
-    gfx_rect(0, 348, VW, 2, col_a(0xFF4FD8FFu, a));
-    shadow_text("HEXACORE", x, 308, 4.0f, col_a(0xFF9BE8FFu, a), 1);
-    shadow_text(g->L->boss_sub ? g->L->boss_sub : "GUARDIAN", x, 336, 1.5f, col_a(WHITE, a), 1);
+    box(x - 190.0f, 300.0f, 380.0f, 74.0f, col_a(PAPER, 0.97f * a), col_a(INK, a), 2.4f, 0x610u);
+    gfx_text_fancy("HEXACORE", x, 300.0f, 44.0f, col_a(C_YELLOW, a), col_a(INK, a), 2.6f, g->time, 2.0f);
+    ink_text(g->L->boss_sub ? g->L->boss_sub : "the boss", x, 348.0f, 18.0f, col_a(INK, a), 1);
 }
 
 /* ------------------------------------------------------------------ */
 /* screens                                                              */
 /* ------------------------------------------------------------------ */
-static void logo(const Game *g, float cx, float y, float px)
+static void title_logo(const Game *g, float cx, float y, float size)
 {
-    const char *word[2] = {"NOVA", "PRISM"};
-    for (int line = 0; line < 2; line++) {
-        const char *s = word[line];
-        float w = gfx_text_width(s, px), x0 = cx - w * 0.5f, ly = y + (float)line * px * 9.0f;
-        for (int i = 0; s[i]; i++) {
+    static const uint32_t COLS[10] = {C_ORANGE, C_YELLOW, C_GREEN, C_SKY, 0, C_PINK, C_RED, C_ORANGE, C_MINT, C_YELLOW};
+    const char *words[2] = {"NOVA", "PRISM"};
+    int ci = 0;
+    for (int w = 0; w < 2; w++) {
+        const char *s = words[w];
+        float x = cx - gfx_text_width(s, size) * 0.5f, ly = y + (float)w * size * 0.95f;
+        for (int i = 0; s[i]; i++, ci++) {
             char ch[2] = {s[i], 0};
-            float lx = x0 + (float)i * 6.0f * px;
-            float bob = sinf(g->time * 2.5f - (float)i * 0.6f - (float)line) * px * 0.6f;
-            for (int d = 5; d >= 1; d--)   /* chunky extruded depth */
-                gfx_text(ch, lx + (float)d * px * 0.25f, ly + bob + (float)d * px * 0.3f, px, col_mix(0x3A0C52FFu, 0x8A1C6AFFu, (float)(5 - d) / 5.0f));
-            uint32_t c = col_hsv(0.88f + 0.06f * (float)i + 0.08f * (float)line + g->time * 0.05f, 0.55f, 1.0f, 255);
-            gfx_text(ch, lx, ly + bob, px, c);
+            float cw = gfx_text_width(ch, size);
+            float bob = sinf(g->time * 3.0f - (float)ci * 0.7f) * size * 0.04f;
+            uint32_t c = COLS[ci % 10] ? COLS[ci % 10] : C_PINK;
+            gfx_text_fancy(ch, x + cw * 0.5f, ly + bob, size, c, INK, size * 0.06f, g->time + (float)ci, 0);
+            x += cw;
         }
     }
+}
+
+static void sticky_note(float cx, float cy, float w, float h, float rot, uint32_t col)
+{
+    Xf t = xf(cx, cy, rot, 1, 1);
+    Poly p; poly_clear(&p);
+    xadd(&p, &t, -w * 0.5f, -h * 0.5f); xadd(&p, &t, w * 0.5f, -h * 0.5f); xadd(&p, &t, w * 0.5f, h * 0.5f); xadd(&p, &t, -w * 0.5f, h * 0.5f);
+    gfx_tex(TEX_SOLID);
+    float sx[4], sy[4];
+    for (int i = 0; i < 4; i++) { sx[i] = p.x[i] + 4.0f; sy[i] = p.y[i] + 5.0f; }
+    gfx_quad4(sx[0], sy[0], 0x00000030u, sx[1], sy[1], 0x00000030u, sx[2], sy[2], 0x00000030u, sx[3], sy[3], 0x00000030u);
+    gfx_quad4(p.x[0], p.y[0], col, p.x[1], p.y[1], col, p.x[2], p.y[2], col_mix(col, 0x806020FFu, 0.08f), p.x[3], p.y[3], col);
+    gfx_tex(TEX_PAPER);
+    gfx_uv(0, 0, 180, 0.3f, 0.1f);
+    gfx_quad4(p.x[0], p.y[0], 0xA0802040u, p.x[1], p.y[1], 0xA0802040u, p.x[2], p.y[2], 0xA0802040u, p.x[3], p.y[3], 0xA0802040u);
+    gfx_tex(TEX_SOLID);
+    /* a strip of tape */
+    Xf tt = xf(cx + (-h * 0.5f) * -sinf(rot), cy + (-h * 0.5f) * cosf(rot), rot - 0.08f, 1, 1);
+    Poly tp; poly_clear(&tp);
+    xadd(&tp, &tt, -40, -10); xadd(&tp, &tt, 40, -10); xadd(&tp, &tt, 40, 10); xadd(&tp, &tt, -40, 10);
+    gfx_quad4(tp.x[0], tp.y[0], 0xEDEAD8B0u, tp.x[1], tp.y[1], 0xEDEAD8B0u, tp.x[2], tp.y[2], 0xEDEAD8B0u, tp.x[3], tp.y[3], 0xEDEAD8B0u);
 }
 
 static void draw_title(const Game *g)
 {
-    gfx_rect_v(0, 0, VW, VH, 0x10041A70u, 0x10041AC0u);
-    gfx_blend(BL_ADD);
-    gfx_glow(VW * 0.5f, 150, 360, col_a(0xFF4FD8FFu, 0.25f));
-    for (int k = 0; k < 12; k++) {                         /* rotating light rays */
-        float a = g->time * 0.15f + TAU * (float)k / 12.0f;
-        gfx_tri(VW * 0.5f, 150, col_a(0xFFB0F0FFu, 0.12f), VW * 0.5f + cosf(a - 0.08f) * 700.0f, 150 + sinf(a - 0.08f) * 700.0f, 0xFFB0F000u,
-                VW * 0.5f + cosf(a + 0.08f) * 700.0f, 150 + sinf(a + 0.08f) * 700.0f, 0xFFB0F000u);
-    }
-    gfx_blend(BL_ALPHA);
-    logo(g, VW * 0.5f, 28, 9.5f);
-    shadow_text("A LOW-POLY SPACE SHOOTER", VW * 0.5f, 198, 2.0f, 0xD8B8F0FFu, 1);
-
-    char buf[48];
-    snprintf(buf, sizeof buf, NUM_LEVELS > 1 ? "< LEVEL %d  %s >" : "LEVEL %d  %s", g->level + 1, LEVELS[g->level].name);
-    shadow_text(buf, VW * 0.5f, 228, 2.5f, 0xFFE070FFu, 1);
+    title_logo(g, VW * 0.5f, 30.0f, 92.0f);
+    ink_text("a doodle space shooter", VW * 0.5f, 196.0f, 22.0f, col_a(PAPER, 0.0f), 1);
+    rim_text("a doodle space shooter", VW * 0.5f, 198.0f, 22.0f, INK, 1, 0, 0);
+    char buf[64];
+    snprintf(buf, sizeof buf, NUM_LEVELS > 1 ? "< Level %d: %s >" : "Level %d: %s", g->level + 1, LEVELS[g->level].name);
+    rim_text(buf, VW * 0.5f, 232.0f, 24.0f, C_YELLOW, 1, 0, 0);
     if (game_best_score(g->level) > 0) {
-        snprintf(buf, sizeof buf, "BEST %ld", game_best_score(g->level));
-        shadow_text(buf, VW * 0.5f, 254, 2.0f, WHITE, 1);
+        snprintf(buf, sizeof buf, "best: %ld", game_best_score(g->level));
+        rim_text(buf, VW * 0.5f, 262.0f, 18.0f, PAPER, 1, 0, 0);
     }
-    if ((int)(g->time * 2.0f) & 1) shadow_text("PRESS A TO LAUNCH", VW * 0.5f, 284, 3.0f, WHITE, 1);
-
-    /* controls legend */
-    static const char *L1[] = {"A  PULSE BLASTER", "B  NOVA BLADE", "X  SWARM MISSILES", "Y  PRISM LANCE"};
-    static const uint32_t C[] = {COL_A, COL_B, COL_X, COL_Y};
-    gfx_rect(110, 382, VW - 220, 84, 0x14051EB0u);
+    if ((int)(g->time * 2.0f) & 1) gfx_text_fancy("press A to launch!", VW * 0.5f, 284.0f, 32.0f, C_ORANGE, INK, 2.2f, g->time, 2.0f);
+    /* controls, on a sticky note */
+    sticky_note(VW * 0.5f, 410.0f, 560.0f, 92.0f, -0.015f, 0xFFF08AFFu);
+    static const char *L[4] = {"A  pulse blaster", "B  nova blade", "X  swarm missiles", "Y  prism lance"};
     for (int k = 0; k < 4; k++) {
-        float x = 140.0f + (float)(k % 2) * 300.0f, y = 392.0f + (float)(k / 2) * 22.0f;
-        gfx_poly(x, y + 5, 7, 4, 0, C[k]);
-        gfx_text(L1[k], x + 14, y, 2.0f, WHITE);
+        float x = 170.0f + (float)(k % 2) * 270.0f, y = 368.0f + (float)(k / 2) * 26.0f;
+        weapon_icon(k, x - 18.0f, y + 12.0f, g->time);
+        ink_text(L[k], x, y, 20.0f, INK, 0);
     }
-    shadow_text("L / R  TURN AROUND     STICK  FLY     +  PAUSE", VW * 0.5f, 444, 1.5f, 0xD8B8F0FFu, 1);
+    ink_text("L / R  turn around     stick  fly     +  pause", VW * 0.5f, 424.0f, 17.0f, INK, 1);
 }
-
-static void dim(float a) { gfx_rect(0, 0, VW, VH, col_a(0x0A0212FFu, a)); }
 
 static void draw_pause(const Game *g)
 {
-    dim(0.6f);
-    shadow_text("PAUSED", VW * 0.5f, 110, 7.0f, WHITE, 1);
-    const char *items[4] = {"RESUME", "RESTART LEVEL", g->sound_on ? "SOUND: ON" : "SOUND: OFF", "QUIT TO TITLE"};
+    gfx_tex(TEX_SOLID);
+    gfx_rect(0, 0, VW, VH, col_a(PAPER, 0.35f));
+    sticky_note(VW * 0.5f, 250.0f, 340.0f, 300.0f, 0.03f, 0xFFF08AFFu);
+    gfx_text_fancy("paused", VW * 0.5f, 112.0f, 52.0f, C_ORANGE, INK, 2.6f, g->time, 2.0f);
+    const char *items[4] = {"keep going", "start over", g->sound_on ? "sound: on" : "sound: off", "quit to title"};
     for (int k = 0; k < 4; k++) {
-        float y = 210.0f + (float)k * 42.0f;
+        float y = 190.0f + (float)k * 42.0f;
         int sel = k == g->menu_sel;
-        if (sel) {
-            gfx_blend(BL_ADD);
-            gfx_rect_v(VW * 0.5f - 200, y - 8, 400, 18, col_a(0xB060FFFFu, 0.0f), col_a(0xB060FFFFu, 0.4f));
-            gfx_rect_v(VW * 0.5f - 200, y + 10, 400, 18, col_a(0xB060FFFFu, 0.4f), col_a(0xB060FFFFu, 0.0f));
-            gfx_blend(BL_ALPHA);
-            float bob = sinf(g->time * 8.0f) * 4.0f;
-            gfx_poly(VW * 0.5f - 170 + bob, y + 10, 8, 3, 0, COL_A);
+        ink_text(items[k], VW * 0.5f, y, 26.0f, sel ? C_RED : INK, 1);
+        if (sel) {                                                      /* circled in red crayon */
+            float w = gfx_text_width(items[k], 26.0f) * 0.5f + 16.0f;
+            Poly c;
+            poly_blob(&c, VW * 0.5f, y + 18.0f, w, 20.0f, 24, 0.06f, 0x700u + (uint32_t)k);
+            pen_poly(&c, 1, 2.4f, C_RED, 0x700u + (uint32_t)boil, 1.5f);
         }
-        shadow_text(items[k], VW * 0.5f, y, 3.0f, sel ? 0xFFE070FFu : 0xD8C8E8FFu, 1);
     }
-    shadow_text("A SELECT    B RESUME", VW * 0.5f, 400, 2.0f, 0xB8A0D0FFu, 1);
+    ink_text("A  pick     B  back", VW * 0.5f, 360.0f, 18.0f, INK, 1);
+}
+
+static void sad_face(float cx, float cy, float r, float t)
+{
+    blob(cx, cy, r, r, C_YELLOW, INK, 2.6f, 0x800u, 0.05f);
+    blob(cx - r * 0.35f, cy - r * 0.2f, 3.0f, 4.0f, INK, 0, 0, 0x801u, 0);
+    blob(cx + r * 0.35f, cy - r * 0.2f, 3.0f, 4.0f, INK, 0, 0, 0x802u, 0);
+    Poly m; poly_clear(&m);
+    for (int k = 0; k <= 8; k++) { float a = PI_F + 0.5f + (PI_F - 1.0f) * (float)k / 8.0f; poly_add(&m, cx + cosf(a) * r * 0.45f, cy + r * 0.55f + sinf(a) * r * 0.3f); }
+    pen_poly(&m, 0, 2.2f, INK, 0x803u, 0.3f);
+    float ty = posmod(t * 0.8f, 1.0f);                                      /* a tear */
+    blob(cx - r * 0.35f, cy + ty * r * 0.8f, 3.0f, 4.5f, C_SKY, INK, 1.2f, 0x804u, 0.05f);
 }
 
 static void draw_over(const Game *g)
 {
-    dim(clampf(g->state_t * 1.5f, 0, 0.65f));
-    float drop = (1.0f - clampf(g->state_t / 0.6f, 0, 1));
+    gfx_tex(TEX_SOLID);
+    gfx_rect(0, 0, VW, VH, col_a(PAPER, clampf(g->state_t * 1.2f, 0, 0.55f)));
+    float drop = 1.0f - clampf(g->state_t / 0.6f, 0, 1);
     drop = drop * drop * 300.0f;
-    gfx_text_wave("GAME OVER", VW * 0.5f + 5, 140 - drop + 5, 9.0f, 0x14051EFFu, g->time, 4.0f);
-    gfx_text_wave("GAME OVER", VW * 0.5f, 140 - drop, 9.0f, 0xFF4F7AFFu, g->time, 4.0f);
-    char buf[40];
-    snprintf(buf, sizeof buf, "SCORE %ld", g->score);
-    shadow_text(buf, VW * 0.5f, 250, 3.5f, WHITE, 1);
-    snprintf(buf, sizeof buf, "REACHED WAVE %d", g->wave + 1);
-    shadow_text(buf, VW * 0.5f, 290, 2.0f, 0xD8B8F0FFu, 1);
-    if (g->state_t > 1.2f) shadow_text("A RETRY    B TITLE", VW * 0.5f, 350, 3.0f, ((int)(g->time * 2.0f) & 1) ? WHITE : 0xFFE070FFu, 1);
+    gfx_text_fancy("GAME OVER", VW * 0.5f, 110.0f - drop, 80.0f, C_RED, INK, 3.6f, g->time, 3.0f);
+    sad_face(VW * 0.5f, 250.0f, 34.0f, g->time);
+    char buf[48];
+    snprintf(buf, sizeof buf, "score: %ld", g->score);
+    rim_text(buf, VW * 0.5f, 300.0f, 30.0f, INK, 1, 0, 0);
+    snprintf(buf, sizeof buf, "you made it to wave %d", g->wave + 1);
+    rim_text(buf, VW * 0.5f, 338.0f, 20.0f, INK, 1, 0, 0);
+    if (g->state_t > 1.2f) gfx_text_fancy("A  try again     B  title", VW * 0.5f, 384.0f, 26.0f, C_ORANGE, INK, 2.0f, g->time, 1.5f);
 }
 
 static void draw_clear(const Game *g)
 {
-    dim(clampf(g->state_t * 1.5f, 0, 0.55f));
+    gfx_tex(TEX_SOLID);
+    gfx_rect(0, 0, VW, VH, col_a(PAPER, clampf(g->state_t * 1.2f, 0, 0.5f)));
     float t = g->state_t;
-    gfx_text_wave("LEVEL CLEAR!", VW * 0.5f + 4, 50 + 4, 7.0f, 0x14051EFFu, g->time, 3.0f);
-    gfx_text_wave("LEVEL CLEAR!", VW * 0.5f, 50, 7.0f, col_hsv(g->time * 0.3f, 0.45f, 1.0f, 255), g->time, 3.0f);
+    sticky_note(VW * 0.5f - 90.0f, 262.0f, 470.0f, 300.0f, -0.02f, 0xFFFDF3FFu);
+    gfx_text_fancy("Level clear!", VW * 0.5f, 26.0f, 64.0f, C_GREEN, INK, 3.2f, g->time, 3.0f);
     char buf[48];
     int mins = (int)(g->play_time / 60.0f), secs = (int)g->play_time % 60;
-    const char *lab[5] = {"SCORE", "BEST MULTIPLIER", "LONGEST CHAIN", "ENEMIES DESTROYED", "TIME"};
+    const char *lab[5] = {"score", "best multiplier", "longest chain", "baddies popped", "time"};
     for (int k = 0; k < 5; k++) {
         float show = clampf((t - 0.3f - 0.35f * (float)k) / 0.25f, 0, 1);
         if (show <= 0) continue;
-        float y = 140.0f + (float)k * 36.0f, x = 200.0f - (1.0f - show) * 80.0f;
+        float y = 148.0f + (float)k * 44.0f;
         switch (k) {
         case 0: snprintf(buf, sizeof buf, "%ld", g->score); break;
-        case 1: snprintf(buf, sizeof buf, "%.1fx", (double)g->best_mult); break;
+        case 1: snprintf(buf, sizeof buf, "x%.1f", (double)g->best_mult); break;
         case 2: snprintf(buf, sizeof buf, "%d", g->max_chain); break;
         case 3: snprintf(buf, sizeof buf, "%d", g->kills); break;
         default: snprintf(buf, sizeof buf, "%d:%02d", mins, secs); break;
         }
-        shadow_text(lab[k], x, y, 2.5f, col_a(0xD8B8F0FFu, show), 0);
-        shadow_text(buf, VW - 330.0f + (1.0f - show) * 80.0f, y, 2.5f, col_a(WHITE, show), 2);
+        ink_text(lab[k], 180.0f, y, 26.0f, col_a(INK, show), 0);
+        ink_text(buf, 590.0f, y, 26.0f, col_a(C_RED, show), 2);
+        pen_line(180.0f, y + 38.0f, 180.0f + 410.0f * show, y + 38.0f, 1.0f, col_a(RULE, 0.9f), 0x900u + (uint32_t)k, 0.3f);
     }
-    if (t > 2.6f) {
+    if (t > 2.6f) {                                                          /* the teacher's grade */
         static const char *R[4] = {"S", "A", "B", "C"};
-        static const uint32_t RC[4] = {0xFFE070FFu, 0xFF7BE0FFu, 0x5CE1FFFFu, 0x9CFFD8FFu};
+        static const char *M[4] = {"WOW!!", "great job!", "good work", "keep trying!"};
         float k = clampf((t - 2.6f) / 0.25f, 0, 1);
-        float px = 12.0f + (1.0f - k) * 24.0f;
-        float cx = VW - 170.0f, cy = 230.0f;
-        gfx_blend(BL_ADD);
-        gfx_glow(cx, cy, 150.0f, col_a(RC[g->rank], 0.4f));
-        for (int i = 0; i < 10; i++) {
-            float a = g->time * 0.6f + TAU * (float)i / 10.0f;
-            gfx_tri(cx, cy, col_a(RC[g->rank], 0.25f), cx + cosf(a - 0.1f) * 200.0f, cy + sinf(a - 0.1f) * 200.0f, RC[g->rank] & 0xFFFFFF00u,
-                    cx + cosf(a + 0.1f) * 200.0f, cy + sinf(a + 0.1f) * 200.0f, RC[g->rank] & 0xFFFFFF00u);
+        float cx = VW - 150.0f, cy = 250.0f, sc = 1.0f + (1.0f - k) * 1.2f;
+        if (g->rank == 0) {                                                  /* gold star sticker */
+            Poly st; poly_clear(&st);
+            for (int i = 0; i < 10; i++) { float a = -PI_F * 0.5f + PI_F * (float)i / 5.0f, rr = (i & 1) ? 38.0f : 84.0f; poly_add(&st, cx + cosf(a) * rr * sc, cy + sinf(a) * rr * sc); }
+            gfx_uv(cx, cy, 128, 0, 0);
+            crayon_fill(&st, C_YELLOW); crayon_fill(&st, C_YELLOW);
+            pen_poly(&st, 1, 3.0f, INK, 0x910u, 0.6f);
+        } else {
+            Poly c;
+            poly_blob(&c, cx, cy, 70.0f * sc, 66.0f * sc, 30, 0.05f, 0x911u);
+            pen_poly(&c, 1, 4.0f, C_RED, 0x911u + (uint32_t)boil, 2.0f);
         }
-        gfx_blend(BL_ALPHA);
-        hex_badge(cx, cy, 70.0f, 0x2A1238F0u, RC[g->rank]);
-        shadow_text(R[g->rank], cx, cy - px * 3.5f, px, RC[g->rank], 1);
-        shadow_text("RANK", cx, cy + 82.0f, 2.5f, WHITE, 1);
+        gfx_text_fancy(R[g->rank], cx, cy - 56.0f * sc, 100.0f * sc, C_RED, PAPER, 2.0f, 0, 0);
+        gfx_text_fancy(M[g->rank], cx, cy + 86.0f, 28.0f, C_RED, PAPER, 1.6f, g->time, 2.0f);
     }
     if (t > 3.0f) {
-        const char *msg = g->level + 1 < NUM_LEVELS ? "PRESS A FOR THE NEXT LEVEL" : "PRESS A TO RETURN TO TITLE";
-        shadow_text(msg, VW * 0.5f, 420, 2.5f, ((int)(g->time * 2.0f) & 1) ? WHITE : 0xFFE070FFu, 1);
+        const char *msg = g->level + 1 < NUM_LEVELS ? "press A for the next level" : "press A to go back to the title";
+        gfx_text_fancy(msg, VW * 0.5f, 424.0f, 26.0f, ((int)(g->time * 2.0f) & 1) ? C_ORANGE : C_YELLOW, INK, 2.0f, 0, 0);
     }
-}
-
-
-/* ------------------------------------------------------------------ */
-/* skyway background: dusk sky, mountains, city, and a lamp-lined track */
-/* ------------------------------------------------------------------ */
-#define SKY_HZ   246.0f      /* horizon */
-#define TRACK_FAR  296.0f    /* far edge of the track (depth 4) */
-#define TRACK_NEAR 446.0f    /* near edge: the ship's floor (depth 1) */
-
-static float posmod(float x, float p) { x = fmodf(x, p); return x < 0 ? x + p : x; }
-static float depth_y(float z) { return SKY_HZ + (TRACK_NEAR - SKY_HZ) / z; }
-
-static void ellipse(float cx, float cy, float rx, float ry, uint32_t cin, uint32_t cout)
-{
-    static const float K[11][2] = { {1,0},{0.809f,0.588f},{0.309f,0.951f},{-0.309f,0.951f},{-0.809f,0.588f},{-1,0},
-                                    {-0.809f,-0.588f},{-0.309f,-0.951f},{0.309f,-0.951f},{0.809f,-0.588f},{1,0} };
-    for (int i = 0; i < 10; i++)
-        gfx_tri(cx, cy, cin, cx + K[i][0] * rx, cy + K[i][1] * ry, cout, cx + K[i + 1][0] * rx, cy + K[i + 1][1] * ry, cout);
-}
-
-/* a row of track lamps at depth z: flattened glowing yellow ovals, like runway lights */
-static void lamp_row(const Game *g, float z, float spacing, float y, float rx, float ry, int glow)
-{
-    const LevelDef *L = g->L;
-    float sp = spacing / z, off = posmod(-g->scroll / z, sp);
-    float pulse = 0.85f + 0.15f * sinf(g->time * 3.0f);
-    for (float x = off - sp; x < VW + sp; x += sp) {
-        if (glow) {
-            gfx_blend(BL_ADD);
-            gfx_glow_cheap(x, y, rx * 2.6f, col_a(L->lamp, 0.35f * pulse));
-            gfx_blend(BL_ALPHA);
-        }
-        ellipse(x, y + ry * 0.35f, rx * 1.08f, ry * 1.15f, 0x8A5A10FFu, 0x8A5A10FFu);     /* bezel */
-        ellipse(x, y, rx, ry, col_mix(L->lamp, WHITE, 0.55f), L->lamp);
-    }
-}
-
-static void draw_skyway(const Game *g)
-{
-    const LevelDef *L = g->L;
-    float s = g->scroll;
-
-    /* sky */
-    gfx_rect_v(-40, -40, VW + 80, 170, L->sky_top, L->sky_mid);
-    gfx_rect_v(-40, 130, VW + 80, SKY_HZ - 130 + 1, L->sky_mid, L->horizon);
-
-    /* stars, high up */
-    gfx_blend(BL_ADD);
-    for (int i = 0; i < 40; i++) {
-        uint32_t h = 0x57A2u + (uint32_t)i * 7919u;
-        float x = posmod(hashf(h) * 1400.0f - s * 0.01f, 1400.0f) - 260.0f, y = 8.0f + hashf(h + 1) * 110.0f;
-        float tw = 0.3f + 0.7f * fabsf(sinf(g->time * (0.8f + hashf(h + 2) * 2.0f) + (float)i));
-        float r = 1.0f + hashf(h + 3) * 1.6f;
-        gfx_rect(x - r, y - r * 0.3f, r * 2.0f, r * 0.6f, col_a(WHITE, 0.6f * tw));
-        gfx_rect(x - r * 0.3f, y - r, r * 0.6f, r * 2.0f, col_a(WHITE, 0.6f * tw));
-    }
-    /* glow along the horizon */
-    gfx_rect_v(-40, SKY_HZ - 90, VW + 80, 90, col_a(L->cloud, 0.0f), col_a(L->cloud, 0.35f));
-    gfx_blend(BL_ALPHA);
-
-    /* low-poly cloud streaks */
-    for (int i = 0; i < 9; i++) {
-        uint32_t h = 0xC10Du + (uint32_t)i * 4451u;
-        float P = 1900.0f, w = 120.0f + hashf(h) * 200.0f;
-        float x = posmod(hashf(h + 1) * P - s * (0.025f + 0.02f * hashf(h + 4)), P) - 300.0f;
-        float y = 120.0f + hashf(h + 2) * 100.0f, th = 5.0f + hashf(h + 3) * 8.0f;
-        uint32_t c = col_a(col_mix(L->cloud, L->horizon, 0.35f), 0.35f + 0.25f * hashf(h + 5));
-        gfx_quad4(x, y, c & 0xFFFFFF00u, x + w * 0.2f, y - th, c, x + w * 0.85f, y - th * 0.7f, c, x + w, y, c & 0xFFFFFF00u);
-        gfx_quad4(x, y, c & 0xFFFFFF00u, x + w, y, c & 0xFFFFFF00u, x + w * 0.8f, y + th * 0.5f, col_a(c, 0.5f), x + w * 0.15f, y + th * 0.4f, col_a(c, 0.5f));
-    }
-
-    /* faceted mountains */
-    {
-        const int N = 34;
-        const float step = 38.0f, P = step * (float)N;
-        float o = posmod(s * 0.05f, P);
-        for (int i = 0; i < 2 * N + 2; i++) {
-            float x0 = (float)i * step - o, x1 = x0 + step;
-            if (x1 < -step || x0 > VW + step) continue;
-            float h0 = 14.0f + hashf(0x30u + (uint32_t)(i % N)) * 58.0f, h1 = 14.0f + hashf(0x30u + (uint32_t)((i + 1) % N)) * 58.0f;
-            float y0 = SKY_HZ - h0, y1 = SKY_HZ - h1, mx = (x0 + x1) * 0.5f, my = (y0 + y1) * 0.5f + 10.0f;
-            uint32_t lit = h1 > h0 ? L->mountain : L->mountain_hi;
-            gfx_tri1(x0, y0, x1, y1, mx, my, lit);
-            gfx_quad4(x0, y0, L->mountain, mx, my, col_mix(L->mountain, L->city, 0.3f), x1, y1, L->mountain, x1, SKY_HZ, L->city);
-            gfx_tri1(x0, y0, x1, SKY_HZ, x0, SKY_HZ, L->mountain);
-        }
-    }
-
-    /* city skyline with lit windows and blinking rooftop beacons */
-    {
-        const int N = 46;
-        const float P = 1500.0f;
-        float wsum = 0, ws[46];
-        for (int i = 0; i < N; i++) { ws[i] = 14.0f + hashf(0xB11Du + (uint32_t)i * 31u) * 34.0f; wsum += ws[i]; }
-        float k = P / wsum, o = posmod(s * 0.13f, P);
-        for (int rep = 0; rep < 2; rep++) {
-            float x = (float)rep * P - o;
-            for (int i = 0; i < N; i++) {
-                float w = ws[i] * k, xa = x;
-                x += w;
-                if (xa > VW + 10 || xa + w < -10) continue;
-                uint32_t h = 0xC17Bu + (uint32_t)i * 97u;
-                float bh = 12.0f + hashf(h) * hashf(h + 1) * 78.0f, top = SKY_HZ - bh;
-                float inset = w * 0.12f;
-                gfx_rect(xa + inset, top, w - inset * 2.0f, bh + 1.0f, L->city);
-                gfx_rect(xa + inset, top, (w - inset * 2.0f) * 0.3f, bh + 1.0f, L->city_hi);
-                if (hashf(h + 2) > 0.55f) gfx_tri1(xa + inset, top, xa + w - inset, top, xa + w * 0.5f, top - 10.0f, L->city);
-                for (float wy = top + 5.0f; wy < SKY_HZ - 4.0f; wy += 6.0f)
-                    for (float wx = xa + inset + 3.0f; wx < xa + w - inset - 3.0f; wx += 5.0f) {
-                        uint32_t wh = hash32((uint32_t)(wx * 7.0f) ^ ((uint32_t)wy * 131u) ^ h);
-                        if ((wh & 7) < 3) gfx_rect(wx, wy, 2.0f, 2.0f, col_a((wh & 64) ? L->window : L->cloud, 0.75f));
-                    }
-                if (bh > 55.0f && fmodf(g->time + hashf(h + 3) * 2.0f, 2.0f) < 1.0f) {
-                    gfx_rect(xa + w * 0.5f - 1.5f, top - 4.0f, 3.0f, 3.0f, 0xFF3048FFu);
-                    gfx_blend(BL_ADD);
-                    gfx_glow_cheap(xa + w * 0.5f, top - 3.0f, 10.0f, 0xFF304890u);
-                    gfx_blend(BL_ALPHA);
-                }
-            }
-        }
-    }
-
-    /* the ground: grass field between horizon and track, with speckles drifting by */
-    gfx_rect_v(-40, SKY_HZ, VW + 80, TRACK_FAR - SKY_HZ, col_mix(L->grass, L->horizon, 0.55f), L->grass);
-    for (int i = 0; i < 160; i++) {
-        uint32_t h = 0x6A55u + (uint32_t)i * 2654435761u;
-        float z = 4.2f + hashf(h) * 14.0f, y = depth_y(z), P = 1700.0f / z * 1.6f;
-        float x = posmod(hashf(h + 1) * P - s / z, P);
-        float a = 0.5f * (1.0f - (z - 4.2f) / 14.0f);
-        for (float xx = x - P; xx < VW + 4.0f; xx += P)
-            if (xx > -4.0f) gfx_rect(xx, y, 6.0f / z * 3.0f, 1.5f, col_a((i & 1) ? L->grass_hi : 0x3A6CD0FFu, a));
-    }
-
-    /* far guard rail + lamps */
-    gfx_rect(-40, TRACK_FAR - 5.0f, VW + 80, 5.0f, col_mix(L->rail, L->horizon, 0.4f));
-    lamp_row(g, 4.0f, 90.0f, TRACK_FAR - 6.0f, 4.0f, 1.6f, 1);
-
-    /* track surface: perspective bands, fogged into the distance */
-    {
-        static const float ZB[] = {4.0f, 3.3f, 2.7f, 2.2f, 1.8f, 1.5f, 1.25f, 1.0f};
-        for (int k = 0; k < 7; k++) {
-            float ya = depth_y(ZB[k]), yb = depth_y(ZB[k + 1]);
-            float fa = clampf(0.5f - 0.5f / ZB[k], 0, 1), fb = clampf(0.5f - 0.5f / ZB[k + 1], 0, 1);
-            uint32_t base = (k & 1) ? L->track_hi : L->track;
-            gfx_rect_v(-40, ya, VW + 80, yb - ya + 0.5f, col_mix(base, L->horizon, fa), col_mix(base, L->horizon, fb));
-        }
-        /* panel seams converging to the vanishing point (they slide past exactly with the camera) */
-        float S = 80.0f, o = posmod(-s, S), cx = VW * 0.5f;
-        for (float off = o - S * 24.0f; off < S * 24.0f; off += S) {
-            float xn = cx + off, xf = cx + off / 4.0f;
-            if ((xn < -60 && xf < -60) || (xn > VW + 60 && xf > VW + 60)) continue;
-            gfx_quad4(xf - 0.4f, TRACK_FAR, col_a(0xFFFFFFFFu, 0.04f), xf + 0.4f, TRACK_FAR, col_a(0xFFFFFFFFu, 0.04f),
-                      xn + 1.2f, TRACK_NEAR, col_a(0xFFFFFFFFu, 0.16f), xn - 1.2f, TRACK_NEAR, col_a(0xFFFFFFFFu, 0.16f));
-        }
-        /* glowing centre line dashes */
-        float yc = depth_y(1.9f);
-        float sp = 120.0f / 1.9f, o2 = posmod(-s / 1.9f, sp);
-        gfx_blend(BL_ADD);
-        for (float x = o2 - sp; x < VW + sp; x += sp)
-            gfx_quad4(x, yc - 1.5f, col_a(L->cloud, 0.25f), x + sp * 0.45f, yc - 1.5f, col_a(L->cloud, 0.25f),
-                      x + sp * 0.45f + 2.0f, yc + 1.5f, col_a(L->cloud, 0.25f), x + 2.0f, yc + 1.5f, col_a(L->cloud, 0.25f));
-        gfx_blend(BL_ALPHA);
-    }
-
-    /* near barrier (the floor) with big lamps */
-    gfx_rect_v(-40, TRACK_NEAR, VW + 80, VH - TRACK_NEAR + 40, L->rail, col_mix(L->rail, 0x000000FFu, 0.5f));
-    gfx_rect(-40, TRACK_NEAR, VW + 80, 2.0f, col_mix(L->rail, WHITE, 0.45f));
-    lamp_row(g, 1.0f, 90.0f, TRACK_NEAR + 9.0f, 17.0f, 5.5f, 1);
 }
 
 /* ------------------------------------------------------------------ */
 void game_render(const Game *g)
 {
     gfx_begin();
-    const LevelDef *L = g->L;
+    boil = (int)(g->time * BOIL_FPS);
+    boil_t = (float)boil / BOIL_FPS;
 
     float ox = 0, oy = 0;
     if (g->shake > 0) {
-        ox = (hashf((uint32_t)g->frame * 2u + 1u) - 0.5f) * 2.0f * g->shake;
-        oy = (hashf((uint32_t)g->frame * 2u + 2u) - 0.5f) * 2.0f * g->shake;
+        ox = (hf((uint32_t)g->frame * 2u + 1u) - 0.5f) * 2.0f * g->shake;
+        oy = (hf((uint32_t)g->frame * 2u + 2u) - 0.5f) * 2.0f * g->shake;
     }
+    draw_background(g, ox * 0.5f, oy * 0.5f);
     gfx_view(ox, oy, 1.0f + g->zoom_kick);
-
-    /* background */
-    if (L->style == STYLE_SKYWAY) {
-        draw_skyway(g);
-    } else {
-        gfx_rect_v(-40, -40, VW + 80, VH + 80, L->sky_top, L->sky_bot);
-        draw_blob_layer(g, 0.3f, 10, 0xB10Bu, 70, 140, 0, L->blob, L->blob_hi);
-        draw_glyph_layer(g);
-        draw_blob_layer(g, 0.65f, 14, 0x51DEu, 60, 120, 1, col_mix(L->blob, L->sky_bot, 0.2f), col_mix(L->blob_hi, L->terr_lo, 0.18f));
-        draw_terrain(g);
-    }
 
     if (g->state != ST_TITLE) {
         draw_crystals(g);
-        gfx_blend(BL_ALPHA);
-        draw_particles(g, 0);
         draw_enemies(g);
         draw_blade(g);
         draw_player(g);
         draw_lance(g);
         draw_projectiles(g);
         draw_ebullets(g);
-        gfx_blend(BL_ADD);
-        draw_particles(g, 1);
-        gfx_blend(BL_ALPHA);
+        draw_particles(g);
         draw_rings(g);
+    } else {
+        draw_particles(g);
     }
 
     gfx_view_reset();
-    /* vignette */
-    gfx_rect_v(0, 0, VW, 50, 0x0A021280u, 0x0A021200u);
-    gfx_rect_v(0, VH - 50, VW, 50, 0x0A021200u, 0x0A021280u);
-    gfx_quad4(0, 0, 0x0A021270u, 90, 0, 0x0A021200u, 90, VH, 0x0A021200u, 0, VH, 0x0A021270u);
-    gfx_quad4(VW - 90, 0, 0x0A021200u, VW, 0, 0x0A021270u, VW, VH, 0x0A021270u, VW - 90, VH, 0x0A021200u);
-
-    if (g->flash > 0) {
-        gfx_blend(BL_ADD);
-        float f = clampf(g->flash, 0, 1);
-        gfx_rect(0, 0, VW, VH, RGBA((int)(255 * g->flash_r), (int)(255 * g->flash_g), (int)(255 * g->flash_b), (int)(f * 170.0f)));
-        gfx_blend(BL_ALPHA);
+    /* getting hurt: a red crayon scribble frame (there are no lights in a drawing) */
+    if (g->flash > 0.05f && g->flash_r > 0.9f && g->flash_g < 0.5f) {
+        float a = clampf(g->flash * 1.4f, 0, 1);
+        gfx_uv(0, 0, 128, hf((uint32_t)g->frame), 0);
+        gfx_tex(TEX_CRAYON);
+        uint32_t c = col_a(C_RED, a);
+        gfx_rect(0, 0, VW, 26, c); gfx_rect(0, VH - 26, VW, 26, c);
+        gfx_rect(0, 26, 26, VH - 52, c); gfx_rect(VW - 26, 26, 26, VH - 52, c);
+        gfx_tex(TEX_SOLID);
     }
 
     switch (g->state) {
     case ST_TITLE:
         draw_title(g);
-        gfx_view(ox, oy, 1.0f);                 /* the ship flies over the title card, at full brightness */
-        gfx_blend(BL_ADD);
-        draw_particles(g, 1);
-        gfx_blend(BL_ALPHA);
+        gfx_view(ox, oy, 1.0f);
         draw_player(g);
         gfx_view_reset();
         break;
@@ -1496,8 +1257,9 @@ void game_render(const Game *g)
         draw_over(g);
         break;
     case ST_CLEAR:
+        draw_particles(g);
         draw_clear(g);
         break;
     }
-    if (g->fade > 0) gfx_rect(0, 0, VW, VH, col_a(0x000000FFu, clampf(g->fade, 0, 1)));
+    if (g->fade > 0) { gfx_tex(TEX_SOLID); gfx_rect(0, 0, VW, VH, col_a(PAPER, clampf(g->fade, 0, 1))); }
 }

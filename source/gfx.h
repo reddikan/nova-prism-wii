@@ -1,13 +1,17 @@
 /*
- * NOVA PRISM - tiny 2D triangle renderer (platform independent).
+ * NOVA PRISM - tiny 2D triangle renderer (platform independent), "notebook doodle" edition.
  *
- * The game draws everything as flat / gouraud-shaded triangles into a big
- * vertex list, split into segments by blend mode (normal alpha blending or
- * additive "glow" blending). On the Wii, main.c sends the list to the GPU (GX)
- * every frame; the native test harness rasterizes the same list in software.
+ * Everything is drawn as triangles into one big vertex list. Each vertex has a position, a colour
+ * and a texture coordinate; the list is split into segments by texture. Every texture is a
+ * greyscale mask that scales the vertex alpha (colour = vertex colour, alpha = vertex alpha * mask):
+ *     TEX_SOLID  plain flat colour
+ *     TEX_CRAYON crayon hatching (diagonal waxy strokes with paper showing through)
+ *     TEX_PAPER  paper fibres
+ *     TEX_FONT   the handwriting font atlas
+ * On the Wii, main.c uploads the textures to the GPU and draws the list with GX; the native test
+ * harness rasterizes the very same list in software.
  *
- * Virtual screen: 854 x 480 (16:9). The Wii renders it anamorphically into its
- * 640-wide framebuffer and the TV / Dolphin stretches it back to 16:9.
+ * Virtual screen: 854 x 480 (16:9).
  */
 #ifndef GFX_H
 #define GFX_H
@@ -17,13 +21,13 @@
 #define VW 854.0f
 #define VH 480.0f
 
-#define GFX_MAX_VTX 150000
-#define GFX_MAX_SEG 4096
+#define GFX_MAX_VTX 160000
+#define GFX_MAX_SEG 8192
 
-enum { BL_ALPHA, BL_ADD };
+enum { TEX_SOLID, TEX_CRAYON, TEX_PAPER, TEX_FONT, TEX_COUNT };
 
-typedef struct { float x, y; uint32_t c; } GVtx;          /* c = 0xRRGGBBAA */
-typedef struct { int mode, start, count; } GSeg;
+typedef struct { float x, y; uint32_t c; float u, v; } GVtx;       /* c = 0xRRGGBBAA */
+typedef struct { int tex, start, count; } GSeg;
 
 extern GVtx gfx_v[GFX_MAX_VTX];
 extern GSeg gfx_seg[GFX_MAX_SEG];
@@ -46,11 +50,18 @@ static inline uint32_t col_a(uint32_t c, float a)          /* scale alpha */
 uint32_t col_mix(uint32_t a, uint32_t b, float t);           /* lerp all four channels */
 uint32_t col_hsv(float h, float s, float v, int a);          /* h in turns (0..1) */
 
+/* textures: greyscale masks, power-of-two sizes, generated / unpacked by gfx_init() */
+void           gfx_init(void);
+const uint8_t *gfx_tex_data(int tex, int *w, int *h);
+
 void gfx_begin(void);
-void gfx_blend(int mode);
+void gfx_tex(int tex);
 /* view transform applied to everything: zoom about the screen centre, then offset (screen shake) */
 void gfx_view(float ox, float oy, float zoom);
 void gfx_view_reset(void);
+/* texture coordinates for crayon / paper fills: u = (x - ox) / scale + du (before the view transform).
+ * Anchor it to a moving object so its scribbles travel with it; nudge du/dv to make the strokes "boil". */
+void gfx_uv(float ox, float oy, float scale, float du, float dv);
 
 void gfx_tri(float x0, float y0, uint32_t c0, float x1, float y1, uint32_t c1, float x2, float y2, uint32_t c2);
 void gfx_tri1(float x0, float y0, float x1, float y1, float x2, float y2, uint32_t c);
@@ -58,24 +69,36 @@ void gfx_quad4(float x0, float y0, uint32_t c0, float x1, float y1, uint32_t c1,
                float x2, float y2, uint32_t c2, float x3, float y3, uint32_t c3);   /* corners in order */
 void gfx_rect(float x, float y, float w, float h, uint32_t c);
 void gfx_rect_v(float x, float y, float w, float h, uint32_t top, uint32_t bot);   /* vertical gradient */
-void gfx_poly(float cx, float cy, float r, int n, float rot, uint32_t c);          /* filled regular polygon */
-void gfx_poly2(float cx, float cy, float r, int n, float rot, uint32_t cin, uint32_t cout);
-void gfx_ring(float cx, float cy, float r, float thick, int n, float rot, uint32_t c);
-void gfx_ring2(float cx, float cy, float r, float thick, int n, float rot, uint32_t cin, uint32_t cout);
-void gfx_arc(float cx, float cy, float r0, float r1, float a0, float a1, int n, uint32_t c0, uint32_t c1); /* c0 at a0 -> c1 at a1 */
-void gfx_glow(float cx, float cy, float r, uint32_t c);   /* soft radial blob: c at the centre, fading to 0 */
-void gfx_glow_cheap(float cx, float cy, float r, uint32_t c);
 void gfx_line(float x0, float y0, float x1, float y1, float w, uint32_t c0, uint32_t c1);
-void gfx_glowline(float x0, float y0, float x1, float y1, float w, uint32_t c);   /* soft-edged line */
-void gfx_capsule(float x, float y, float dx, float dy, float len, float w, uint32_t c); /* tapered streak */
 
-/* 5x7 pixel font: uppercase, digits and a little punctuation */
-const uint8_t *gfx_glyph(char ch);                 /* 7 rows of 5 bits, or NULL */
-float gfx_text_width(const char *s, float px);
-void  gfx_text(const char *s, float x, float y, float px, uint32_t c);            /* top-left anchored */
-void  gfx_text_c(const char *s, float cx, float y, float px, uint32_t c);         /* centred */
-void  gfx_text_r(const char *s, float rx, float y, float px, uint32_t c);         /* right aligned */
-/* fancy text: each letter bounces/scales individually; t = animation time */
-void  gfx_text_wave(const char *s, float cx, float y, float px, uint32_t c, float t, float amp);
+/* ---- hand-drawn primitives ---- */
+#define POLY_MAX 96
+typedef struct { int n; float x[POLY_MAX], y[POLY_MAX]; } Poly;
+
+void poly_clear(Poly *p);
+void poly_add(Poly *p, float x, float y);
+/* lumpy kid-drawn ellipse */
+void poly_blob(Poly *p, float cx, float cy, float rx, float ry, int n, float lump, uint32_t seed);
+/* crayon-coloured fill (any simple polygon, convex or not), scribbled with the current uv anchor */
+void crayon_fill(const Poly *p, uint32_t col);
+/* felt-pen outline with a hand-wobble; seed picks the wobble, closed shapes overshoot a little at the end */
+void pen_poly(const Poly *p, int closed, float width, uint32_t col, uint32_t seed, float wobble);
+void pen_line(float x0, float y0, float x1, float y1, float width, uint32_t col, uint32_t seed, float wobble);
+/* strokes only, no wash: big coloured-in areas where the paper should peek through */
+void crayon_scribble(const Poly *p, uint32_t col);
+/* fill + outline in one go */
+void doodle(const Poly *p, uint32_t fill, uint32_t ink, float width, uint32_t seed);
+
+/* ---- handwriting ---- size = font size in pixels; y = top of the text line ---- */
+float gfx_text_width(const char *s, float size);
+void  gfx_text(const char *s, float x, float y, float size, uint32_t c);
+void  gfx_text_c(const char *s, float cx, float y, float size, uint32_t c);
+void  gfx_text_r(const char *s, float rx, float y, float size, uint32_t c);
+/* wobbly bouncing letters; outline > 0 draws a fat ink outline behind them (bubble-letter look) */
+void  gfx_text_fancy(const char *s, float cx, float y, float size, uint32_t fill, uint32_t ink, float outline, float t, float bounce);
+
+/* smooth value noise in [-1, 1] */
+float noise1(uint32_t seed, float t);
+uint32_t ihash(uint32_t x);
 
 #endif

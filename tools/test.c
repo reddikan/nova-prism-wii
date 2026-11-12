@@ -27,12 +27,26 @@ static const char *outdir = ".";
 /* ------------------------------------------------------------------ */
 /* software rasterizer                                                  */
 /* ------------------------------------------------------------------ */
+/* bilinear, wrapping texture lookup, like the Wii's GPU with GX_REPEAT + GX_LINEAR */
+static float tex_sample(const uint8_t *t, int w, int h, float u, float v)
+{
+    float fx = u * (float)w - 0.5f, fy = v * (float)h - 0.5f;
+    float flx = floorf(fx), fly = floorf(fy);
+    int x0 = (int)flx, y0 = (int)fly;
+    float tx = fx - flx, ty = fy - fly;
+    int xa = ((x0 % w) + w) % w, xb = (xa + 1) % w, ya = ((y0 % h) + h) % h, yb = (ya + 1) % h;
+    float a = t[ya * w + xa], b = t[ya * w + xb], c = t[yb * w + xa], d = t[yb * w + xb];
+    return ((a + (b - a) * tx) + ((c + (d - c) * tx) - (a + (b - a) * tx)) * ty) / 255.0f;
+}
+
 static void raster(void)
 {
     for (int y = 0; y < OH; y++) for (int x = 0; x < OW; x++) fb[y][x][0] = fb[y][x][1] = fb[y][x][2] = 0;
     const float S = (float)OW / VW;
     for (int s = 0; s < gfx_nseg; s++) {
-        int add = gfx_seg[s].mode == BL_ADD;
+        int tw, th;
+        const uint8_t *tex = gfx_tex_data(gfx_seg[s].tex, &tw, &th);
+        int solid = gfx_seg[s].tex == TEX_SOLID;
         for (int i = gfx_seg[s].start; i + 2 < gfx_seg[s].start + gfx_seg[s].count; i += 3) {
             const GVtx *v = &gfx_v[i];
             float x0 = v[0].x * S, y0 = v[0].y * S, x1 = v[1].x * S, y1 = v[1].y * S, x2 = v[2].x * S, y2 = v[2].y * S;
@@ -58,9 +72,11 @@ static void raster(void)
                     float w2 = 1.0f - w0 - w1;
                     if (w0 < 0 || w1 < 0 || w2 < 0) continue;
                     float a = c[0][3] * w0 + c[1][3] * w1 + c[2][3] * w2;
+                    if (!solid) a *= tex_sample(tex, tw, th, v[0].u * w0 + v[1].u * w1 + v[2].u * w2, v[0].v * w0 + v[1].v * w1 + v[2].v * w2);
+                    if (a <= 0.002f) continue;
                     for (int ch = 0; ch < 3; ch++) {
                         float src = c[0][ch] * w0 + c[1][ch] * w1 + c[2][ch] * w2;
-                        float d = add ? fb[py][px][ch] + src * a : fb[py][px][ch] * (1 - a) + src * a;
+                        float d = fb[py][px][ch] * (1 - a) + src * a;
                         fb[py][px][ch] = d > 1 ? 1 : (d < 0 ? 0 : d);
                     }
                 }
@@ -452,6 +468,7 @@ int main(int argc, char **argv)
     uint32_t prev = 0;
     double worst_u = 0, worst_r = 0, sum_u = 0, sum_r = 0;
     int maxv = 0, maxseg = 0, frames = 0;
+    long sumv = 0;
     for (int i = 0; i < 60 * 600 && G.state == ST_PLAY; i++) {
         Input in = bot_input(&G, 2, prev);
         prev = in.held;
@@ -466,10 +483,24 @@ int main(int argc, char **argv)
         if (dr > worst_r) worst_r = dr;
         sum_u += du; sum_r += dr; frames++;
         if (gfx_nv > maxv) maxv = gfx_nv;
+        sumv += gfx_nv;
+        static int dumped;
+        if (gfx_nv > 150000 && !dumped) {
+            dumped = 1;
+            int ne = 0, np = 0, nr = 0, nb = 0, ncr = 0, neb = 0;
+            for (int k = 0; k < MAX_EN; k++) ne += G.en[k].alive;
+            for (int k = 0; k < MAX_PT; k++) np += G.pt[k].alive;
+            for (int k = 0; k < MAX_RING; k++) nr += G.rg[k].alive;
+            for (int k = 0; k < MAX_PB; k++) nb += G.pb[k].alive;
+            for (int k = 0; k < MAX_CRY; k++) ncr += G.cr[k].alive;
+            for (int k = 0; k < MAX_EB; k++) neb += G.eb[k].alive;
+            printf("  PEAK frame %d: enemies %d particles %d rings %d bolts %d crystals %d ebullets %d boss_dying %.2f\n", i, ne, np, nr, nb, ncr, neb, (double)G.boss_dying);
+            shot(&G, "peak");
+        }
         if (gfx_nseg > maxseg) maxseg = gfx_nseg;
     }
     printf("  frames %d  update avg %.3f ms worst %.3f ms   render avg %.3f ms worst %.3f ms\n", frames, sum_u / frames, worst_u, sum_r / frames, worst_r);
-    printf("  max vertices %d (%d triangles, limit %d)  max blend segments %d\n", maxv, maxv / 3, GFX_MAX_VTX, maxseg);
+    printf("  max vertices %d (%d triangles, limit %d)  avg vertices %ld  max segments %d\n", maxv, maxv / 3, GFX_MAX_VTX, sumv / frames, maxseg);
     CHECK(maxv < GFX_MAX_VTX - 3, "vertex buffer never full");
 
     printf("\n%s (%d failures)\n", fails ? "SOME CHECKS FAILED" : "all checks passed", fails);

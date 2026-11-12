@@ -1,9 +1,9 @@
 /*
  * NOVA PRISM - Nintendo Wii platform layer (devkitPPC + libogc).
  *
- *   video : the game's triangle list is drawn by the Wii's GPU (GX): flat/gouraud
- *           shaded triangles with normal and additive blending, 60 fps, 16:9
- *           anamorphic (or letterboxed inside 4:3 - press MINUS)
+ *   video : the game's triangle list is drawn by the Wii's GPU (GX): coloured, textured
+ *           triangles (crayon, paper and handwriting masks) with alpha blending, 60 fps,
+ *           16:9 anamorphic (or letterboxed inside 4:3 - press MINUS)
  *   input : Wii Classic Controller (plugged into Wii Remote 1): buttons + left stick
  *   audio : synthesized effects played through ASND, pitch-shifted per event
  *
@@ -35,6 +35,27 @@ static int         fbi;
 static int         wide = 1;           /* 1 = 16:9 anamorphic, 0 = letterboxed 16:9 inside a 4:3 picture */
 static volatile int quit;
 static Game        game;
+static GXTexObj    texobj[TEX_COUNT];
+
+/* The GPU wants textures in 8x4 tiles (for 8-bit intensity), not row by row: re-pack and upload each one. */
+static void textures_init(void)
+{
+    gfx_init();
+    for (int t = 0; t < TEX_COUNT; t++) {
+        int w, h;
+        const uint8_t *src = gfx_tex_data(t, &w, &h);
+        uint8_t *dst = memalign(32, (size_t)(w * h));
+        int o = 0;
+        for (int ty = 0; ty < h; ty += 4)
+            for (int tx = 0; tx < w; tx += 8)
+                for (int y = 0; y < 4; y++)
+                    for (int x = 0; x < 8; x++) dst[o++] = src[(ty + y) * w + tx + x];
+        DCFlushRange(dst, (u32)(w * h));
+        GX_InitTexObj(&texobj[t], dst, (u16)w, (u16)h, GX_TF_I8, GX_REPEAT, GX_REPEAT, GX_FALSE);
+        GX_InitTexObjLOD(&texobj[t], GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
+    }
+    GX_InvalidateTexAll();
+}
 
 /* ------------------------------------------------------------------ */
 /* video                                                               */
@@ -76,7 +97,7 @@ static void video_init(void)
     memset(fifo, 0, FIFO_SIZE);
     GX_Init(fifo, FIFO_SIZE);
 
-    GXColor black = {0, 0, 0, 255};
+    GXColor black = {0, 0, 0, 255};          /* (only seen in the 4:3 letterbox bars; the page covers everything else) */
     GX_SetCopyClear(black, 0x00FFFFFF);
     f32 yscale = GX_GetYScaleFactor(rmode->efbHeight, rmode->xfbHeight);
     u32 xfbh = GX_SetDispCopyYScale(yscale);
@@ -90,20 +111,27 @@ static void video_init(void)
     GX_SetDither(GX_ENABLE);
     set_view();
 
-    /* vertex format: 2D position (z = 0) + RGBA colour, sent directly */
+    /* vertex format: 2D position (z = 0) + RGBA colour + texture coordinate, sent directly */
     GX_ClearVtxDesc();
     GX_SetVtxDesc(GX_VA_POS, GX_DIRECT);
     GX_SetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+    GX_SetVtxDesc(GX_VA_TEX0, GX_DIRECT);
     GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
     GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
+    GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
 
-    /* no lighting, no textures: the vertex colour goes straight through */
+    /* no lighting. One texture stage: colour = vertex colour, alpha = vertex alpha x texture (crayon/paper/font mask) */
     GX_SetNumChans(1);
     GX_SetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_REG, GX_SRC_VTX, GX_LIGHTNULL, GX_DF_NONE, GX_AF_NONE);
-    GX_SetNumTexGens(0);
+    GX_SetNumTexGens(1);
+    GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
     GX_SetNumTevStages(1);
-    GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORDNULL, GX_TEXMAP_NULL, GX_COLOR0A0);
-    GX_SetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+    GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
+    GX_SetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_ZERO, GX_CC_ZERO, GX_CC_RASC);
+    GX_SetTevAlphaIn(GX_TEVSTAGE0, GX_CA_ZERO, GX_CA_TEXA, GX_CA_RASA, GX_CA_ZERO);
+    GX_SetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    GX_SetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    GX_SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_CLEAR);
     GX_SetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
     GX_SetAlphaUpdate(GX_FALSE);
     GX_SetColorUpdate(GX_TRUE);
@@ -126,8 +154,7 @@ static void draw_list(void)
     for (int s = 0; s < gfx_nseg; s++) {
         const GSeg *seg = &gfx_seg[s];
         if (seg->count < 3) continue;
-        if (seg->mode == BL_ADD) GX_SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_CLEAR);
-        else                     GX_SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_CLEAR);
+        GX_LoadTexObj(&texobj[seg->tex], GX_TEXMAP0);
         int i = seg->start, end = seg->start + seg->count;
         while (i + 2 < end) {
             int n = end - i;
@@ -138,6 +165,7 @@ static void draw_list(void)
                 const GVtx *v = &gfx_v[i + k];
                 GX_Position3f32(v->x, v->y, 0.0f);
                 GX_Color1u32(v->c);
+                GX_TexCoord2f32(v->u, v->v);
             }
             GX_End();
             i += n;
@@ -234,6 +262,7 @@ int main(int argc, char **argv)
     SYS_SetPowerCallback(on_power);
 
     game_init(&game);                          /* also synthesizes the sound effects */
+    textures_init();                           /* crayon, paper and handwriting textures onto the GPU */
     for (int id = 0; id < SFX_COUNT; id++)     /* ASND reads samples by DMA: flush the cache */
         DCFlushRange((void *)audio_data(id), (u32)audio_len(id) * 2);
 

@@ -19,8 +19,8 @@
 const LevelDef LEVELS[] = {
     /* ---------------------------------------------------------------- LEVEL 1 */
     {
-        .name    = "NEON SKYWAY",
-        .boss_sub = "GUARDIAN OF THE SKYWAY",
+        .name    = "NOTEBOOK NEBULA",
+        .boss_sub = "the grumpiest shape in space",
         .style   = STYLE_SKYWAY,
         .seed    = 0x5EED1234u,
         .width   = 3416.0f,             /* four screens around */
