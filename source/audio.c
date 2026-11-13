@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - sound effect synthesis. See audio.h.
+ * DOODLE SHOOTER - sound effect synthesis. See audio.h.
  *
  * Every effect is built at start-up from a small synth (band-limited and FM oscillators, resonant filtered
  * noise and a short echo), so no audio files are needed. Bright, punchy arcade-sci-fi sounds.

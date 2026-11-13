@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - tiny 2D triangle renderer (platform independent), "notebook doodle" edition.
+ * DOODLE SHOOTER - tiny 2D triangle renderer (platform independent), "notebook doodle" edition.
  *
  * Everything is drawn as triangles into one big vertex list. Each vertex has a position, a colour
  * and a texture coordinate; the list is split into segments by texture. Every texture is a
@@ -24,7 +24,10 @@
 #define GFX_MAX_VTX 160000
 #define GFX_MAX_SEG 8192
 
-enum { TEX_SOLID, TEX_CRAYON, TEX_PAPER, TEX_FONT, TEX_COUNT };
+enum { TEX_SOLID, TEX_CRAYON, TEX_PAPER, TEX_FONT,   /* greyscale masks (alpha = vertex alpha x mask) */
+       TEX_SHIP, TEX_LOGO,                          /* full-colour hand-drawn pictures (colour = vertex x picture) */
+       TEX_COUNT };
+#define TEX_FIRST_RGBA TEX_SHIP
 
 typedef struct { float x, y; uint32_t c; float u, v; } GVtx;       /* c = 0xRRGGBBAA */
 typedef struct { int tex, start, count; } GSeg;
@@ -52,7 +55,10 @@ uint32_t col_hsv(float h, float s, float v, int a);          /* h in turns (0..1
 
 /* textures: greyscale masks, power-of-two sizes, generated / unpacked by gfx_init() */
 void           gfx_init(void);
-const uint8_t *gfx_tex_data(int tex, int *w, int *h);
+const uint8_t *gfx_tex_data(int tex, int *w, int *h);          /* masks: 8 bits per pixel */
+const uint8_t *gfx_tex_rgba(int tex, int *w, int *h);          /* pictures: RGBA, 4 bytes per pixel */
+/* draw a picture texture on a quad given by its four corners (top-left, top-right, bottom-right, bottom-left) */
+void gfx_image(int tex, const float *x, const float *y, uint32_t tint);
 
 void gfx_begin(void);
 void gfx_tex(int tex);
@@ -94,7 +100,7 @@ float gfx_text_width(const char *s, float size);
 void  gfx_text(const char *s, float x, float y, float size, uint32_t c);
 void  gfx_text_c(const char *s, float cx, float y, float size, uint32_t c);
 void  gfx_text_r(const char *s, float rx, float y, float size, uint32_t c);
-/* wobbly bouncing letters; outline > 0 draws a fat ink outline behind them (bubble-letter look) */
+/* wobbly bouncing letters (solid colour, no outline; `outline` is ignored) */
 void  gfx_text_fancy(const char *s, float cx, float y, float size, uint32_t fill, uint32_t ink, float outline, float t, float bounce);
 
 /* smooth value noise in [-1, 1] */

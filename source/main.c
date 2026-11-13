@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - Nintendo Wii platform layer (devkitPPC + libogc).
+ * DOODLE SHOOTER - Nintendo Wii platform layer (devkitPPC + libogc).
  *
  *   video : the game's triangle list is drawn by the Wii's GPU (GX): coloured, textured
  *           triangles (crayon, paper and handwriting masks) with alpha blending, 60 fps,
@@ -37,12 +37,33 @@ static volatile int quit;
 static Game        game;
 static GXTexObj    texobj[TEX_COUNT];
 
+/* full-colour pictures: RGB5A3 (opaque texels 5:5:5, see-through ones 3:4:4:4) in 4x4 tiles */
+static void upload_picture(int t)
+{
+    int w, h;
+    const uint8_t *src = gfx_tex_rgba(t, &w, &h);
+    u16 *dst = memalign(32, (size_t)(w * h * 2));
+    int o = 0;
+    for (int ty = 0; ty < h; ty += 4)
+        for (int tx = 0; tx < w; tx += 4)
+            for (int y = 0; y < 4; y++)
+                for (int x = 0; x < 4; x++) {
+                    const uint8_t *p = src + ((ty + y) * w + tx + x) * 4;
+                    if (p[3] >= 0xF8) dst[o++] = (u16)(0x8000 | ((p[0] >> 3) << 10) | ((p[1] >> 3) << 5) | (p[2] >> 3));
+                    else              dst[o++] = (u16)(((p[3] >> 5) << 12) | ((p[0] >> 4) << 8) | ((p[1] >> 4) << 4) | (p[2] >> 4));
+                }
+    DCFlushRange(dst, (u32)(w * h * 2));
+    GX_InitTexObj(&texobj[t], dst, (u16)w, (u16)h, GX_TF_RGB5A3, GX_CLAMP, GX_CLAMP, GX_FALSE);
+    GX_InitTexObjLOD(&texobj[t], GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
+}
+
 /* The GPU wants textures in 8x4 tiles (for 8-bit intensity), not row by row: re-pack and upload each one. */
 static void textures_init(void)
 {
     gfx_init();
     for (int t = 0; t < TEX_COUNT; t++) {
         int w, h;
+        if (t >= TEX_FIRST_RGBA) { upload_picture(t); continue; }
         const uint8_t *src = gfx_tex_data(t, &w, &h);
         uint8_t *dst = memalign(32, (size_t)(w * h));
         int o = 0;
@@ -149,12 +170,20 @@ static void video_init(void)
 }
 
 /* send the frame's triangle list to the GPU */
+static int tev_pic;
+
 static void draw_list(void)
 {
     for (int s = 0; s < gfx_nseg; s++) {
         const GSeg *seg = &gfx_seg[s];
         if (seg->count < 3) continue;
         GX_LoadTexObj(&texobj[seg->tex], GX_TEXMAP0);
+        int pic = seg->tex >= TEX_FIRST_RGBA;           /* pictures: colour = vertex x texture; masks: colour = vertex */
+        if (pic != tev_pic) {
+            tev_pic = pic;
+            if (pic) GX_SetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_TEXC, GX_CC_RASC, GX_CC_ZERO);
+            else     GX_SetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_ZERO, GX_CC_ZERO, GX_CC_RASC);
+        }
         int i = seg->start, end = seg->start + seg->count;
         while (i + 2 < end) {
             int n = end - i;

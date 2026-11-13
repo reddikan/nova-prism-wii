@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - native test harness (no Wii toolchain needed).
+ * DOODLE SHOOTER - native test harness (no Wii toolchain needed).
  *
  *  - software-rasterizes the exact triangle list the Wii's GPU gets (alpha + additive blending,
  *    clamped like the Wii's 8-bit framebuffer) and saves screenshots
@@ -39,13 +39,30 @@ static float tex_sample(const uint8_t *t, int w, int h, float u, float v)
     return ((a + (b - a) * tx) + ((c + (d - c) * tx) - (a + (b - a) * tx)) * ty) / 255.0f;
 }
 
+/* bilinear, clamped RGBA lookup for the hand-drawn pictures (GX_CLAMP + GX_LINEAR) */
+static void tex_rgba(const uint8_t *t, int w, int h, float u, float v, float out[4])
+{
+    float fx = u * (float)w - 0.5f, fy = v * (float)h - 0.5f;
+    if (fx < 0) fx = 0; if (fy < 0) fy = 0;
+    if (fx > (float)w - 1.001f) fx = (float)w - 1.001f;
+    if (fy > (float)h - 1.001f) fy = (float)h - 1.001f;
+    int x0 = (int)fx, y0 = (int)fy;
+    float tx = fx - (float)x0, ty = fy - (float)y0;
+    const uint8_t *a = t + (y0 * w + x0) * 4, *b = a + 4, *c = a + w * 4, *d = c + 4;
+    for (int k = 0; k < 4; k++) {
+        float top = a[k] + (b[k] - a[k]) * tx, bot = c[k] + (d[k] - c[k]) * tx;
+        out[k] = (top + (bot - top) * ty) / 255.0f;
+    }
+}
+
 static void raster(void)
 {
     for (int y = 0; y < OH; y++) for (int x = 0; x < OW; x++) fb[y][x][0] = fb[y][x][1] = fb[y][x][2] = 0;
     const float S = (float)OW / VW;
     for (int s = 0; s < gfx_nseg; s++) {
-        int tw, th;
+        int tw, th, rw = 0, rh = 0;
         const uint8_t *tex = gfx_tex_data(gfx_seg[s].tex, &tw, &th);
+        const uint8_t *pic = gfx_seg[s].tex >= TEX_FIRST_RGBA ? gfx_tex_rgba(gfx_seg[s].tex, &rw, &rh) : NULL;
         int solid = gfx_seg[s].tex == TEX_SOLID;
         for (int i = gfx_seg[s].start; i + 2 < gfx_seg[s].start + gfx_seg[s].count; i += 3) {
             const GVtx *v = &gfx_v[i];
@@ -72,10 +89,13 @@ static void raster(void)
                     float w2 = 1.0f - w0 - w1;
                     if (w0 < 0 || w1 < 0 || w2 < 0) continue;
                     float a = c[0][3] * w0 + c[1][3] * w1 + c[2][3] * w2;
-                    if (!solid) a *= tex_sample(tex, tw, th, v[0].u * w0 + v[1].u * w1 + v[2].u * w2, v[0].v * w0 + v[1].v * w1 + v[2].v * w2);
+                    float tc[4] = {1, 1, 1, 1};
+                    float uu = v[0].u * w0 + v[1].u * w1 + v[2].u * w2, vv = v[0].v * w0 + v[1].v * w1 + v[2].v * w2;
+                    if (pic) { tex_rgba(pic, rw, rh, uu, vv, tc); a *= tc[3]; }
+                    else if (!solid) a *= tex_sample(tex, tw, th, uu, vv);
                     if (a <= 0.002f) continue;
                     for (int ch = 0; ch < 3; ch++) {
-                        float src = c[0][ch] * w0 + c[1][ch] * w1 + c[2][ch] * w2;
+                        float src = (c[0][ch] * w0 + c[1][ch] * w1 + c[2][ch] * w2) * tc[ch];
                         float d = fb[py][px][ch] * (1 - a) + src * a;
                         fb[py][px][ch] = d > 1 ? 1 : (d < 0 ? 0 : d);
                     }

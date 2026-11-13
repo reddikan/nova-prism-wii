@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - rendering, "notebook doodle" edition.
+ * DOODLE SHOOTER - rendering, "notebook doodle" edition.
  *
  * Everything looks like a kid drew it with crayons and a felt pen on a page of school notebook paper:
  * crayon-scribbled fills, wobbly navy outlines, handwriting, no lighting at all.
@@ -34,6 +34,9 @@ enum { P_SPARK, P_GLOW, P_DEBRIS, P_SMOKE, P_CONF, P_STAR };   /* must match gam
 #define C_GREEN_D 0x5DB03AFFu
 #define C_PINK   0xFF6FA8FFu
 #define C_GREY   0x8A8A96FFu
+#define T_ORANGE 0xEE7A12FFu    /* text colours: darker so solid letters read on cream */
+#define T_GREEN  0x3A9A2EFFu
+#define T_BLUE   0x2A64C8FFu
 
 static int   boil;              /* stop-motion frame number for the background */
 static float boil_t;            /* time of the current boil frame */
@@ -118,49 +121,65 @@ static float hf(uint32_t x) { return (float)(ihash(x) >> 8) / 16777216.0f; }
 #define WALL_TOP 34.0f
 #define WALL_BOT 446.0f
 
-static void draw_paper(void)
+/* The page scrolls slower than the action (and shifts a touch up/down as you fly), the doodles on it
+ * scroll faster - so the paper reads as the far layer and you get a sense of depth. */
+#define PAPER_PX 0.35f            /* horizontal parallax of the page */
+#define PAPER_PY 0.06f            /* vertical parallax of the page (from the ship's height) */
+
+static void draw_paper(const Game *g)
 {
+    float P = g->W * PAPER_PX;                                  /* the page repeats once per trip round the level */
+    float ox = -posmod(g->scroll * PAPER_PX, P), oy = (240.0f - g->py) * PAPER_PY;
     gfx_tex(TEX_SOLID);
     gfx_rect(-30, -30, VW + 60, VH + 60, PAPER);
     /* paper fibres and soft crumples */
     gfx_tex(TEX_PAPER);
-    gfx_uv(0, 0, 210.0f, 0, 0);
+    gfx_uv(ox, oy, 210.0f, 0, 0);
     gfx_rect(-30, -30, VW + 60, VH + 60, col_a(PAPER_DK, 0.55f));
     gfx_tex(TEX_SOLID);
     static const float CR[5][8] = {
         {120, -10, 420, -10, 300, 200, 60, 260}, {520, 60, 900, 20, 880, 300, 640, 220},
         {-20, 300, 260, 250, 380, 500, -20, 500}, {420, 300, 700, 260, 760, 500, 380, 500}, {250, 120, 520, 160, 420, 330, 210, 280} };
-    for (int i = 0; i < 5; i++)
-        gfx_quad4(CR[i][0], CR[i][1], col_a(PAPER_DK, (i & 1) ? 0.10f : 0.0f), CR[i][2], CR[i][3], col_a(PAPER_DK, 0.08f),
-                  CR[i][4], CR[i][5], col_a(PAPER_DK, (i & 1) ? 0.0f : 0.12f), CR[i][6], CR[i][7], col_a(PAPER_DK, 0.05f));
-    /* ruled lines and the red margin */
-    for (float y = 26.0f; y < VH + 10.0f; y += 21.0f) gfx_rect(-30, y, VW + 60, 1.4f, col_a(RULE, 0.85f));
-    gfx_rect(62, -30, 1.6f, VH + 60, col_a(MARGIN, 0.85f));
-    gfx_rect(66, -30, 1.0f, VH + 60, col_a(MARGIN, 0.5f));
-}
-
-static void draw_binder_holes(void)
-{
-    for (float y = 36.0f; y < VH; y += 68.0f) {
-        Poly p;
-        poly_blob(&p, 22, y, 9.5f, 9.5f, 14, 0.05f, (uint32_t)y);
-        gfx_uv(0, 0, 128, 0, 0);
-        crayon_fill(&p, 0x6E5E4EFFu);
-        gfx_tex(TEX_SOLID);
-        gfx_quad4(13, y - 2, 0x3E3226C0u, 31, y - 2, 0x3E3226C0u, 31, y + 2, 0x3E322600u, 13, y + 2, 0x3E322600u);
-        pen_poly(&p, 1, 1.0f, col_a(0x9C8A70FFu, 0.8f), (uint32_t)y, 0.3f);
+    for (float base = ox; base < VW + 40.0f; base += P)
+        for (int i = 0; i < 5; i++) {
+            if (base + CR[i][2] < -40 || base + CR[i][0] > VW + 40) continue;
+            gfx_quad4(base + CR[i][0], CR[i][1] + oy, col_a(PAPER_DK, (i & 1) ? 0.10f : 0.0f), base + CR[i][2], CR[i][3] + oy, col_a(PAPER_DK, 0.08f),
+                      base + CR[i][4], CR[i][5] + oy, col_a(PAPER_DK, (i & 1) ? 0.0f : 0.12f), base + CR[i][6], CR[i][7] + oy, col_a(PAPER_DK, 0.05f));
+        }
+    /* ruled lines and the red margin (with the binder holes) scrolling past */
+    float first = 26.0f + posmod(oy, 21.0f) - 21.0f;
+    for (float y = first; y < VH + 10.0f; y += 21.0f) gfx_rect(-30, y, VW + 60, 1.4f, col_a(RULE, 0.85f));
+    for (float base = ox; base < VW + 40.0f; base += P) {
+        if (base + 70.0f < -10.0f) continue;
+        /* where one sheet ends and the next begins: the new sheet's edge casts a soft shadow */
+        gfx_rect(base - 1.0f, -30, 1.4f, VH + 60, col_a(0x9C8A70FFu, 0.55f));
+        gfx_quad4(base - 14.0f, -30, col_a(0x7A6A50FFu, 0.0f), base - 1.0f, -30, col_a(0x7A6A50FFu, 0.22f),
+                  base - 1.0f, VH + 30, col_a(0x7A6A50FFu, 0.22f), base - 14.0f, VH + 30, col_a(0x7A6A50FFu, 0.0f));
+        gfx_rect(base + 62, -30, 1.6f, VH + 60, col_a(MARGIN, 0.85f));
+        gfx_rect(base + 66, -30, 1.0f, VH + 60, col_a(MARGIN, 0.5f));
+        for (float y = 36.0f + posmod(oy, 68.0f) - 68.0f; y < VH + 20.0f; y += 68.0f) {
+            Poly p;
+            float hx = base + 22.0f;
+            uint32_t hs = (uint32_t)(y - oy + 100.0f);
+            poly_blob(&p, hx, y, 9.5f, 9.5f, 14, 0.05f, hs);
+            gfx_uv(hx, y, 128, 0, 0);
+            crayon_fill(&p, 0x6E5E4EFFu);
+            gfx_tex(TEX_SOLID);
+            gfx_quad4(hx - 9, y - 2, 0x3E3226C0u, hx + 9, y - 2, 0x3E3226C0u, hx + 9, y + 2, 0x3E322600u, hx - 9, y + 2, 0x3E322600u);
+            pen_poly(&p, 1, 1.0f, col_a(0x9C8A70FFu, 0.8f), hs, 0.3f);
+        }
     }
 }
 
 /* little doodles floating in space: stars, plus signs, squares, planets, a smiley moon */
 static void draw_space_doodles(const Game *g, float factor, int n, uint32_t seed0, int big)
 {
-    float P = 1800.0f, s = g->scroll * factor;
+    float P = 1800.0f, s = g->scroll * factor, oy = (240.0f - g->py) * factor * 0.2f;
     for (int i = 0; i < n; i++) {
         uint32_t h = seed0 + (uint32_t)i * 7919u;
         float x = posmod(hf(h) * P - s, P) - 120.0f;
         if (x < -60 || x > VW + 60) continue;
-        float y = WALL_TOP + 30.0f + hf(h + 1) * (WALL_BOT - WALL_TOP - 60.0f);
+        float y = WALL_TOP + 30.0f + hf(h + 1) * (WALL_BOT - WALL_TOP - 60.0f) + oy;
         uint32_t seed = h + (uint32_t)boil * 131u;
         int kind = (int)(hf(h + 2) * (big ? 4.0f : 5.0f));
         float r = big ? 16.0f + hf(h + 3) * 14.0f : 4.0f + hf(h + 3) * 4.0f;
@@ -221,38 +240,28 @@ static void draw_background(const Game *g, float shx, float shy)
 {
     float jx = (hf((uint32_t)boil * 3u + 1u) - 0.5f) * 1.6f, jy = (hf((uint32_t)boil * 5u + 2u) - 0.5f) * 1.2f;
     gfx_view(shx + jx, shy + jy, 1.0f);
-    draw_paper();
-    draw_space_doodles(g, 0.25f, 7, 0xBEEFu, 1);
-    draw_space_doodles(g, 0.5f, 46, 0xF00Du, 0);
-    draw_binder_holes();
+    draw_paper(g);
+    draw_space_doodles(g, 0.55f, 7, 0xBEEFu, 1);
+    draw_space_doodles(g, 0.8f, 46, 0xF00Du, 0);
 }
 
 /* ------------------------------------------------------------------ */
 /* the player's rocket                                                  */
 /* ------------------------------------------------------------------ */
+#define SHIP_PIC 66.0f            /* size the 128x128 drawing is shown at */
+
 static void ship_model(const Xf *t, float flame, float time)
 {
-    static const float FIN_T[4][2] = {{-2, -10}, {-15, -23}, {-24, -22}, {-17, -8}};
-    static const float FIN_B[4][2] = {{-2, 10}, {-17, 8}, {-24, 22}, {-15, 23}};
-    static const float BODY[10][2] = {{30, 0}, {22, -7.5f}, {8, -11.5f}, {-10, -11}, {-20, -8}, {-23, 0}, {-20, 8}, {-10, 11}, {8, 11.5f}, {22, 7.5f}};
-    static const float NOSE[4][2] = {{31, 0}, {20, -8.5f}, {16, 0}, {20, 8.5f}};
-    static const float STRIPE[4][2] = {{-6, -11}, {-1, -11.4f}, {-1, 11.4f}, {-6, 11}};
-    shape(t, FIN_T, 4, C_YELLOW, INK, 2.2f, 101);
-    shape(t, FIN_B, 4, C_YELLOW, INK, 2.2f, 102);
-    if (flame > 0) {
-        float L = flame * (1.0f + 0.25f * sinf(time * 47.0f)), z = sinf(time * 31.0f) * 2.0f;
-        float F[7][2] = {{-21, -6.5f}, {-21 - L * 0.55f, -8.5f + z}, {-21 - L * 0.5f, -3}, {-21 - L, z}, {-21 - L * 0.5f, 3}, {-21 - L * 0.55f, 8.5f - z}, {-21, 6.5f}};
+    if (flame > 0) {                                             /* crayon flame out of the engine, behind the drawing */
+        float L = flame * (1.0f + 0.25f * sinf(time * 47.0f)), z = sinf(time * 31.0f) * 2.0f, b = -23.0f;
+        float F[7][2] = {{b, -6.5f}, {b - L * 0.55f, -8.5f + z}, {b - L * 0.5f, -3}, {b - L, z}, {b - L * 0.5f, 3}, {b - L * 0.55f, 8.5f - z}, {b, 6.5f}};
         shape(t, (const float (*)[2])F, 7, C_YELLOW, INK, 1.8f, 103);
-        float F2[5][2] = {{-21, -3.5f}, {-21 - L * 0.4f, -2.5f}, {-21 - L * 0.62f, z * 0.5f}, {-21 - L * 0.4f, 2.5f}, {-21, 3.5f}};
+        float F2[5][2] = {{b, -3.5f}, {b - L * 0.4f, -2.5f}, {b - L * 0.62f, z * 0.5f}, {b - L * 0.4f, 2.5f}, {b, 3.5f}};
         shape(t, (const float (*)[2])F2, 5, C_RED, 0, 0, 104);
     }
-    shape(t, BODY, 10, C_ORANGE, INK, 2.4f, 105);
-    shape(t, STRIPE, 4, C_RED, 0, 0, 106);
-    xline(t, -6, -11, -6, 11, 1.6f, INK, 107);
-    xline(t, -1, -11.4f, -1, 11.4f, 1.6f, INK, 108);
-    shape(t, NOSE, 4, C_RED, INK, 2.2f, 109);
-    xblob(t, 7, -1, 6.5f, C_SKY, INK, 2.0f, 110);
-    xline(t, 4.5f, -4.5f, 7.5f, -5.5f, 1.8f, WHITE, 111);                 /* shine on the window */
+    float h = SHIP_PIC * 0.5f, X[4], Y[4];
+    xpt(t, -h, -h, &X[0], &Y[0]); xpt(t, h, -h, &X[1], &Y[1]); xpt(t, h, h, &X[2], &Y[2]); xpt(t, -h, h, &X[3], &Y[3]);
+    gfx_image(TEX_SHIP, X, Y, WHITE);
 }
 
 static void draw_trail(const Game *g)
@@ -277,15 +286,15 @@ static void draw_player(const Game *g)
     if (!g->alive) return;
     float sx = sxof(g, g->px), sy = g->py;
     float ft = g->flip_t > 0 ? g->flip_t : 0.0f;
-    float scx = (float)g->face * cosf(PI_F * ft) * 1.1f;
-    float scy = (1.0f - 0.25f * sinf(PI_F * ft)) * 1.1f;
+    float scx = (float)g->face * cosf(PI_F * ft);
+    float scy = (1.0f - 0.25f * sinf(PI_F * ft));
     float rot = g->tilt * (scx >= 0 ? 1.0f : -1.0f) + g->flip_dir * sinf(PI_F * ft) * 0.25f;
     if (fabsf(scx) < 0.1f) scx = scx < 0 ? -0.1f : 0.1f;
     Xf t = xf(sx, sy - sinf(PI_F * ft) * 6.0f, rot, scx, scy);
     int blink = g->inv_t > 0 && ((int)(g->time * 16.0f) & 1);
     draw_trail(g);
     float boost = 1.0f + clampf((g->pvx * (float)g->face) / SHIP_SPEED, 0, 1) * 0.7f;
-    if (!blink) ship_model(&t, 12.0f * boost, g->time);
+    if (!blink) ship_model(&t, 13.0f * boost, g->time);
     /* heat: a little thermometer drawn over the ship */
     if (g->heat > 0.25f || g->overheat) {
         float x = sx - 20.0f, y = sy - 36.0f, w = 40.0f, h = 7.0f;
@@ -362,7 +371,7 @@ static void draw_lance(const Game *g)
             for (int i = 0; i <= 14; i++) poly_add(&z, x0 + (x1 - x0) * (float)i / 14.0f, sy + yo + ((i & 1) ? -1.0f : 1.0f) * w * 0.18f);
             pen_poly(&z, 0, 1.6f, C_BLUE, seed + (uint32_t)k, 0.5f);
         }
-        if (lt > 0.4f) gfx_text_fancy("ZAP!", x0 + dir * 70.0f, sy - w - 34.0f, 30.0f, C_YELLOW, INK, 2.2f, g->time, 3.0f);
+        if (lt > 0.4f) gfx_text_fancy("ZAP!", x0 + dir * 70.0f, sy - w - 34.0f, 30.0f, T_BLUE, INK, 2.2f, g->time, 3.0f);
     }
 }
 
@@ -704,7 +713,7 @@ static void draw_crystals(const Game *g)
         } else {
             float bob = sinf(g->time * 4.0f) * 2.5f, pulse = 1.0f + 0.08f * sinf(g->time * 9.0f);
             heart(sx, c->y + bob, 15.0f * pulse, C_RED, seed);
-            gfx_text_fancy("+", sx + 14.0f, c->y + bob - 28.0f, 22.0f, C_GREEN, INK, 1.4f, 0, 0);
+            gfx_text_fancy("+", sx + 14.0f, c->y + bob - 28.0f, 22.0f, T_GREEN, INK, 1.4f, 0, 0);
         }
     }
 }
@@ -770,7 +779,8 @@ static void draw_particles(const Game *g)
             if (i & 3) break;
             blob(sx, p->y, p->size * 1.3f, p->size * 1.15f, col_a(WHITE, t), col_a(C_GREY, t), 1.4f, seed, 0.15f);
             break;
-        case P_CONF: {
+        case P_CONF: break;                             /* confetti isn't hand-drawn: not shown */
+        case P_STAR: {
             Xf x = xf(sx, p->y, p->rot, p->size, p->size * fabsf(cosf(p->rot * 1.7f)) + 0.5f);
             static const float Q[4][2] = {{-1, -0.6f}, {1, -0.6f}, {1, 0.6f}, {-1, 0.6f}};
             if (t < 0.3f && ((int)(t * 40.0f) & 1)) break;
@@ -814,13 +824,12 @@ static void ink_text(const char *s, float x, float y, float size, uint32_t c, in
     float lx = align == 0 ? x : (align == 1 ? x - w * 0.5f : x - w);
     gfx_text(s, lx, y, size, c);
 }
-/* coloured handwriting with a navy pen rim so it reads on cream paper (navy text gets a paper rim) */
+/* solid-colour handwriting (optionally bouncy) */
 static void rim_text(const char *s, float x, float y, float size, uint32_t c, int align, float t, float bounce)
 {
     float w = gfx_text_width(s, size);
     float cx = align == 0 ? x + w * 0.5f : (align == 1 ? x : x - w * 0.5f);
-    uint32_t rim = (c & 0xFFFFFF00u) == (INK & 0xFFFFFF00u) ? PAPER : col_a(INK, (float)(c & 255) / 255.0f);
-    gfx_text_fancy(s, cx, y, size, c, rim, size * 0.06f, t, bounce);
+    gfx_text_fancy(s, cx, y, size, c, 0, 0, t, bounce);
 }
 
 static void box(float x, float y, float w, float h, uint32_t fill, uint32_t ink, float pw, uint32_t seed)
@@ -930,12 +939,11 @@ static void draw_hud(const Game *g)
         float beat = (on && g->shields == 1) ? 1.0f + 0.15f * sinf(g->time * 12.0f) : 1.0f;
         heart(x, y, 12.0f * beat, on ? C_RED : col_a(PAPER, 0.9f), 0x500u + (uint32_t)k);
     }
-    mini_rocket(220.0f, 18.0f, 0.45f);
+    mini_rocket(220.0f, 18.0f, 0.42f);
     snprintf(buf, sizeof buf, "x%d", g->lives);
     ink_text(buf, 236.0f, 6.0f, 20.0f, INK, 0);
     if (g->wave < g->L->nwaves) snprintf(buf, sizeof buf, "Wave %d of %d", g->wave + 1, g->L->nwaves);
     else snprintf(buf, sizeof buf, "All clear!");
-    ink_text(buf, 80.0f, 34.0f, 17.0f, col_a(PAPER, 0.0f), 0);
     rim_text(buf, 82.0f, 36.0f, 17.0f, INK, 0, 0, 0);
 
     draw_minimap(g);
@@ -965,7 +973,7 @@ static void draw_hud(const Game *g)
     ink_text(line, VW - 22.0f, 2.0f, 26.0f, INK, 2);
     snprintf(buf, sizeof buf, "x%.1f", (double)g->mult);
     float ms = 30.0f + g->mult_pulse * 10.0f;
-    uint32_t mc = g->mult >= 10.0f ? col_hsv(g->time * 0.5f, 0.75f, 0.95f, 255) : C_ORANGE;
+    uint32_t mc = g->mult >= 10.0f ? col_hsv(g->time * 0.5f, 0.8f, 0.82f, 255) : T_ORANGE;
     rim_text(buf, VW - 22.0f, 34.0f - g->mult_pulse * 4.0f, ms, mc, 2, g->time, g->mult >= 10.0f ? 2.0f : 0.0f);
     if (g->chain >= 2) {
         snprintf(buf, sizeof buf, "%d hits!", g->chain);
@@ -975,7 +983,7 @@ static void draw_hud(const Game *g)
     }
     if (g->chain_show > 0) {
         snprintf(buf, sizeof buf, "+%ld bonus", g->chain_bonus);
-        rim_text(buf, VW - 22.0f, 104.0f, 18.0f, col_a(C_GREEN_D, clampf(g->chain_show, 0, 1)), 2, 0, 0);
+        rim_text(buf, VW - 22.0f, 104.0f, 18.0f, col_a(T_GREEN, clampf(g->chain_show, 0, 1)), 2, 0, 0);
     }
 
     draw_weapon_boxes(g);
@@ -995,7 +1003,7 @@ static void draw_popups(const Game *g)
         float age = p->max_life - p->life;
         float pop = age < 0.12f ? 1.0f + (0.12f - age) / 0.12f * 0.7f : 1.0f;
         float a = clampf(p->life / 0.3f, 0, 1);
-        uint32_t c = col_a(col_mix(p->col | 255u, INK, 0.15f), a);
+        uint32_t c = col_a(col_mix(p->col | 255u, INK, 0.38f), a);
         if (p->big) gfx_text_fancy(p->txt, p->x, p->y, 40.0f * pop, c, col_a(INK, a), 2.6f, g->time, 3.0f);
         else gfx_text_fancy(p->txt, p->x, p->y, 19.0f * pop, c, col_a(INK, a), 1.3f, 0, 0);
     }
@@ -1010,7 +1018,7 @@ static void draw_banner(const Game *g)
     float a = in * out;
     float y = 170.0f;
     int warn = strcmp(g->banner, "WARNING") == 0;
-    uint32_t c = warn ? C_RED : C_YELLOW;
+    uint32_t c = warn ? C_RED : T_ORANGE;
     gfx_text_fancy(g->banner, VW * 0.5f + slide, y, 64.0f, col_a(c, a), col_a(INK, a), 3.4f, g->time, 3.0f);
     float w = gfx_text_width(g->banner, 64.0f) * 0.5f;                     /* scribbly underline */
     Poly u; poly_clear(&u);
@@ -1025,30 +1033,21 @@ static void draw_boss_card(const Game *g)
     float t = g->boss_intro, a = clampf(t / 0.4f, 0, 1) * clampf((2.5f - t) / 0.2f, 0, 1);
     float x = VW * 0.5f + (1.0f - clampf((2.5f - t) / 0.3f, 0, 1)) * -400.0f;
     box(x - 190.0f, 300.0f, 380.0f, 74.0f, col_a(PAPER, 0.97f * a), col_a(INK, a), 2.4f, 0x610u);
-    gfx_text_fancy("HEXACORE", x, 300.0f, 44.0f, col_a(C_YELLOW, a), col_a(INK, a), 2.6f, g->time, 2.0f);
+    gfx_text_fancy("HEXACORE", x, 300.0f, 44.0f, col_a(T_ORANGE, a), col_a(INK, a), 2.6f, g->time, 2.0f);
     ink_text(g->L->boss_sub ? g->L->boss_sub : "the boss", x, 348.0f, 18.0f, col_a(INK, a), 1);
 }
 
 /* ------------------------------------------------------------------ */
 /* screens                                                              */
 /* ------------------------------------------------------------------ */
-static void title_logo(const Game *g, float cx, float y, float size)
+static void title_logo(const Game *g, float cx, float y, float w)
 {
-    static const uint32_t COLS[10] = {C_ORANGE, C_YELLOW, C_GREEN, C_SKY, 0, C_PINK, C_RED, C_ORANGE, C_MINT, C_YELLOW};
-    const char *words[2] = {"NOVA", "PRISM"};
-    int ci = 0;
-    for (int w = 0; w < 2; w++) {
-        const char *s = words[w];
-        float x = cx - gfx_text_width(s, size) * 0.5f, ly = y + (float)w * size * 0.95f;
-        for (int i = 0; s[i]; i++, ci++) {
-            char ch[2] = {s[i], 0};
-            float cw = gfx_text_width(ch, size);
-            float bob = sinf(g->time * 3.0f - (float)ci * 0.7f) * size * 0.04f;
-            uint32_t c = COLS[ci % 10] ? COLS[ci % 10] : C_PINK;
-            gfx_text_fancy(ch, x + cw * 0.5f, ly + bob, size, c, INK, size * 0.06f, g->time + (float)ci, 0);
-            x += cw;
-        }
-    }
+    float h = w * 272.0f / 768.0f, bob = sinf(g->time * 2.0f) * 3.0f, rot = sinf(g->time * 1.3f) * 0.012f;
+    Xf t = xf(cx, y + h * 0.5f + bob, rot, 1, 1);
+    float X[4], Y[4];
+    xpt(&t, -w * 0.5f, -h * 0.5f, &X[0], &Y[0]); xpt(&t, w * 0.5f, -h * 0.5f, &X[1], &Y[1]);
+    xpt(&t, w * 0.5f, h * 0.5f, &X[2], &Y[2]);   xpt(&t, -w * 0.5f, h * 0.5f, &X[3], &Y[3]);
+    gfx_image(TEX_LOGO, X, Y, WHITE);
 }
 
 static void sticky_note(float cx, float cy, float w, float h, float rot, uint32_t col)
@@ -1074,17 +1073,15 @@ static void sticky_note(float cx, float cy, float w, float h, float rot, uint32_
 
 static void draw_title(const Game *g)
 {
-    title_logo(g, VW * 0.5f, 30.0f, 92.0f);
-    ink_text("a doodle space shooter", VW * 0.5f, 196.0f, 22.0f, col_a(PAPER, 0.0f), 1);
-    rim_text("a doodle space shooter", VW * 0.5f, 198.0f, 22.0f, INK, 1, 0, 0);
+    title_logo(g, VW * 0.5f, 6.0f, 600.0f);
     char buf[64];
     snprintf(buf, sizeof buf, NUM_LEVELS > 1 ? "< Level %d: %s >" : "Level %d: %s", g->level + 1, LEVELS[g->level].name);
-    rim_text(buf, VW * 0.5f, 232.0f, 24.0f, C_YELLOW, 1, 0, 0);
+    rim_text(buf, VW * 0.5f, 226.0f, 24.0f, T_ORANGE, 1, 0, 0);
     if (game_best_score(g->level) > 0) {
         snprintf(buf, sizeof buf, "best: %ld", game_best_score(g->level));
-        rim_text(buf, VW * 0.5f, 262.0f, 18.0f, PAPER, 1, 0, 0);
+        rim_text(buf, VW * 0.5f, 254.0f, 18.0f, INK, 1, 0, 0);
     }
-    if ((int)(g->time * 2.0f) & 1) gfx_text_fancy("press A to launch!", VW * 0.5f, 284.0f, 32.0f, C_ORANGE, INK, 2.2f, g->time, 2.0f);
+    if ((int)(g->time * 2.0f) & 1) gfx_text_fancy("press A to launch!", VW * 0.5f, 278.0f, 32.0f, C_RED, INK, 2.2f, g->time, 2.0f);
     /* controls, on a sticky note */
     sticky_note(VW * 0.5f, 410.0f, 560.0f, 92.0f, -0.015f, 0xFFF08AFFu);
     static const char *L[4] = {"A  pulse blaster", "B  nova blade", "X  swarm missiles", "Y  prism lance"};
@@ -1101,7 +1098,7 @@ static void draw_pause(const Game *g)
     gfx_tex(TEX_SOLID);
     gfx_rect(0, 0, VW, VH, col_a(PAPER, 0.35f));
     sticky_note(VW * 0.5f, 250.0f, 340.0f, 300.0f, 0.03f, 0xFFF08AFFu);
-    gfx_text_fancy("paused", VW * 0.5f, 112.0f, 52.0f, C_ORANGE, INK, 2.6f, g->time, 2.0f);
+    gfx_text_fancy("paused", VW * 0.5f, 112.0f, 52.0f, T_ORANGE, INK, 2.6f, g->time, 2.0f);
     const char *items[4] = {"keep going", "start over", g->sound_on ? "sound: on" : "sound: off", "quit to title"};
     for (int k = 0; k < 4; k++) {
         float y = 190.0f + (float)k * 42.0f;
@@ -1142,7 +1139,7 @@ static void draw_over(const Game *g)
     rim_text(buf, VW * 0.5f, 300.0f, 30.0f, INK, 1, 0, 0);
     snprintf(buf, sizeof buf, "you made it to wave %d", g->wave + 1);
     rim_text(buf, VW * 0.5f, 338.0f, 20.0f, INK, 1, 0, 0);
-    if (g->state_t > 1.2f) gfx_text_fancy("A  try again     B  title", VW * 0.5f, 384.0f, 26.0f, C_ORANGE, INK, 2.0f, g->time, 1.5f);
+    if (g->state_t > 1.2f) gfx_text_fancy("A  try again     B  title", VW * 0.5f, 384.0f, 26.0f, T_ORANGE, INK, 2.0f, g->time, 1.5f);
 }
 
 static void draw_clear(const Game *g)
@@ -1151,7 +1148,7 @@ static void draw_clear(const Game *g)
     gfx_rect(0, 0, VW, VH, col_a(PAPER, clampf(g->state_t * 1.2f, 0, 0.5f)));
     float t = g->state_t;
     sticky_note(VW * 0.5f - 90.0f, 262.0f, 470.0f, 300.0f, -0.02f, 0xFFFDF3FFu);
-    gfx_text_fancy("Level clear!", VW * 0.5f, 26.0f, 64.0f, C_GREEN, INK, 3.2f, g->time, 3.0f);
+    gfx_text_fancy("Level clear!", VW * 0.5f, 26.0f, 64.0f, T_GREEN, INK, 3.2f, g->time, 3.0f);
     char buf[48];
     int mins = (int)(g->play_time / 60.0f), secs = (int)g->play_time % 60;
     const char *lab[5] = {"score", "best multiplier", "longest chain", "baddies popped", "time"};
@@ -1191,7 +1188,7 @@ static void draw_clear(const Game *g)
     }
     if (t > 3.0f) {
         const char *msg = g->level + 1 < NUM_LEVELS ? "press A for the next level" : "press A to go back to the title";
-        gfx_text_fancy(msg, VW * 0.5f, 424.0f, 26.0f, ((int)(g->time * 2.0f) & 1) ? C_ORANGE : C_YELLOW, INK, 2.0f, 0, 0);
+        gfx_text_fancy(msg, VW * 0.5f, 424.0f, 26.0f, ((int)(g->time * 2.0f) & 1) ? T_ORANGE : C_RED, INK, 2.0f, 0, 0);
     }
 }
 

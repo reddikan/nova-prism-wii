@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - a bright, low-poly side-view space shooter for the Wii.
+ * DOODLE SHOOTER - a hand-drawn, notebook-doodle side-view space shooter for the Wii.
  *
  * game.c / levels.c / gfx.c / audio.c are plain C99 and know nothing about the
  * console. The game takes its input as a BTN_* bitmask plus an analog stick,

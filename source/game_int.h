@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - helpers shared by game.c (rules) and draw.c (rendering).
+ * DOODLE SHOOTER - helpers shared by game.c (rules) and draw.c (rendering).
  */
 #ifndef GAME_INT_H
 #define GAME_INT_H

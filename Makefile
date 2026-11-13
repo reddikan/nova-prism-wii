@@ -1,7 +1,7 @@
 #---------------------------------------------------------------------------------
-# NOVA PRISM - Wii homebrew (devkitPPC + libogc, GX graphics)
+# DOODLE SHOOTER - Wii homebrew (devkitPPC + libogc, GX graphics)
 #
-#   make        builds boot.dol (open it in Dolphin, or copy apps/novaprism/ to an SD card)
+#   make        builds boot.dol (open it in Dolphin, or copy apps/doodleshooter/ to an SD card)
 #   make clean
 #   make test   native test harness (needs only a C compiler; python3 + Pillow for PNGs)
 #---------------------------------------------------------------------------------
@@ -29,8 +29,8 @@ LDFLAGS := $(MACHDEP) -L$(LIBOGC_LIB)
 LIBS    := -lasnd -lwiiuse -lbte -logc -lm
 
 all: $(TARGET).dol
-	mkdir -p apps/novaprism
-	cp $(TARGET).dol meta.xml icon.png apps/novaprism/
+	mkdir -p apps/doodleshooter
+	cp $(TARGET).dol meta.xml icon.png apps/doodleshooter/
 
 $(TARGET).elf: $(OBJS)
 	$(CC) $(OBJS) $(LDFLAGS) $(LIBS) -o $@

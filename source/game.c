@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - game rules: ship, weapons, enemies, waves, scoring, menus.
+ * DOODLE SHOOTER - game rules: ship, weapons, enemies, waves, scoring, menus.
  * Rendering lives in draw.c.
  */
 #include "game_int.h"
@@ -1486,7 +1486,7 @@ void game_update(Game *g, const Input *in, float dt)
         g->camx = wrapx(g, g->camx + dt * 90.0f);
         g->scroll += dt * 90.0f;
         g->px = wrapx(g, g->camx - 120.0f + sinf(g->time * 0.8f) * 60.0f);
-        g->py = 312.0f + sinf(g->time * 1.3f) * 10.0f;
+        g->py = 336.0f + sinf(g->time * 1.3f) * 6.0f;
         g->face = 1; g->alive = 1;
         if (NUM_LEVELS > 1 && (pressed & (BTN_LEFT | BTN_RIGHT))) {
             g->level = (g->level + ((pressed & BTN_RIGHT) ? 1 : NUM_LEVELS - 1)) % NUM_LEVELS;
@@ -1494,7 +1494,7 @@ void game_update(Game *g, const Input *in, float dt)
             sfx(g, SFX_MOVE);
         }
         if ((g->frame % 4) == 0)
-            spark(g, g->px - 42.0f, g->py, PI_F + frange(g, -0.2f, 0.2f), frange(g, 200, 400), 0.4f, 3.0f, (g->frame & 4) ? 0x7DF9FFFFu : 0xFFFFFFFFu);
+            spark(g, g->px - 42.0f, g->py, PI_F + frange(g, -0.2f, 0.2f), frange(g, 200, 400), 0.4f, 3.0f, (g->frame & 4) ? 0xFF9A2AFFu : 0xFFD23AFFu);
         if (pressed & (BTN_A | BTN_PLUS)) { game_start(g, g->level); return; }
         update_particles(g, dt);
         update_feel(g, dt);

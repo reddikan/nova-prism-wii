@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - procedurally synthesized sound effects.
+ * DOODLE SHOOTER - procedurally synthesized sound effects.
  *
  * No audio files: every effect is generated at start-up from FM / band-limited
  * oscillators and filtered noise. Samples are 16-bit signed mono at SFX_RATE Hz

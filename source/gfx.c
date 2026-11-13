@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - triangle list builder, procedural crayon/paper textures, hand-drawn primitives,
+ * DOODLE SHOOTER - triangle list builder, procedural crayon/paper textures, hand-drawn primitives,
  * and the handwriting font. See gfx.h.
  */
 #include "gfx.h"
@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "font_data.h"
+#include "art_data.h"
 
 #define TAU 6.28318530718f
 
@@ -80,6 +81,13 @@ static uint8_t tex_crayon[CRAYON_N * CRAYON_N] __attribute__((aligned(32)));
 static uint8_t tex_paper[PAPER_N * PAPER_N] __attribute__((aligned(32)));
 static uint8_t tex_font[FONT_W * FONT_H] __attribute__((aligned(32)));
 static float   work[CRAYON_N * CRAYON_N];
+static uint8_t tex_ship[SHIP_W * SHIP_H * 4] __attribute__((aligned(32)));
+static uint8_t tex_logo[LOGO_W * LOGO_H * 4] __attribute__((aligned(32)));
+
+static void unpack_art(uint8_t *dst, const unsigned char *pal, const unsigned char *idx, int n)
+{
+    for (int i = 0; i < n; i++) memcpy(dst + i * 4, pal + idx[i] * 4, 4);
+}
 
 /* tileable 2D value noise on an n x n texture with `cells` grid cells per side */
 static float vnoise2(int x, int y, int n, int cells, uint32_t seed)
@@ -170,6 +178,8 @@ void gfx_init(void)
         tex_font[i * 2]     = (uint8_t)((FONT_PIXELS[i] >> 4) * 17);
         tex_font[i * 2 + 1] = (uint8_t)((FONT_PIXELS[i] & 15) * 17);
     }
+    unpack_art(tex_ship, SHIP_PAL, SHIP_IDX, SHIP_W * SHIP_H);
+    unpack_art(tex_logo, LOGO_PAL, LOGO_IDX, LOGO_W * LOGO_H);
 }
 
 const uint8_t *gfx_tex_data(int tex, int *w, int *h)
@@ -179,6 +189,15 @@ const uint8_t *gfx_tex_data(int tex, int *w, int *h)
     case TEX_PAPER:  *w = PAPER_N;  *h = PAPER_N;  return tex_paper;
     case TEX_FONT:   *w = FONT_W;   *h = FONT_H;   return tex_font;
     default:         *w = 8;        *h = 8;        return tex_solid;
+    }
+}
+
+const uint8_t *gfx_tex_rgba(int tex, int *w, int *h)
+{
+    switch (tex) {
+    case TEX_SHIP: *w = SHIP_W; *h = SHIP_H; return tex_ship;
+    case TEX_LOGO: *w = LOGO_W; *h = LOGO_H; return tex_logo;
+    default:       *w = 0; *h = 0; return NULL;
     }
 }
 
@@ -429,6 +448,17 @@ static void glyph_quad(const short *m, float x, float base, float k, float rot, 
     gfx_seg[gfx_nseg - 1].count += 6;
 }
 
+void gfx_image(int tex, const float *x, const float *y, uint32_t tint)
+{
+    static const float U[4] = {0, 1, 1, 0}, V[4] = {0, 0, 1, 1};
+    static const int T[6] = {0, 1, 2, 0, 2, 3};
+    gfx_tex(tex);
+    if (gfx_nv + 6 > GFX_MAX_VTX || gfx_nseg == 0) return;
+    for (int i = 0; i < 6; i++) emit_uv(x[T[i]], y[T[i]], tint, U[T[i]], V[T[i]]);
+    gfx_seg[gfx_nseg - 1].count += 6;
+    gfx_tex(TEX_SOLID);
+}
+
 void gfx_text(const char *s, float x, float y, float size, uint32_t c)
 {
     if ((c & 255) == 0) return;
@@ -452,7 +482,8 @@ void gfx_text_fancy(const char *s, float cx, float y, float size, uint32_t fill,
     float k = size / (float)FONT_BAKE, base = y + size * 0.86f;
     float x0 = cx - gfx_text_width(s, size) * 0.5f;
     static const float O[8][2] = {{1,0},{0.7f,0.7f},{0,1},{-0.7f,0.7f},{-1,0},{-0.7f,-0.7f},{0,-1},{0.7f,-0.7f}};
-    for (int pass = outline > 0 ? 0 : 1; pass < 2; pass++) {
+    (void)outline; (void)ink;                     /* lettering is solid colour: no outline */
+    for (int pass = 1; pass < 2; pass++) {
         float x = x0;
         for (int i = 0; s[i]; i++) {
             const short *m = glyph_m(s[i]);

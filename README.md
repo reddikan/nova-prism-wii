@@ -1,10 +1,12 @@
-# NOVA PRISM  (Wii homebrew)
+# DOODLE SHOOTER  (Wii homebrew)
+
+![Doodle Shooter](tools/art/logo_cutout.png)
 
 A side-view space shooter for the Nintendo Wii, played with the **Wii Classic Controller**, that looks like a kid
 doodled it on a page of school notebook paper: crayon-coloured rockets and monsters, wobbly felt-pen outlines,
 handwriting everywhere. The page "boils" like stop-motion animation while the action stays a smooth **60 fps** in **16:9**.
 
-Fly your crayon rocket across the wrap-around **Notebook Nebula**, fight enemies coming from both sides, keep your
+Fly your hand-drawn rocket across the wrap-around **Notebook Nebula**, fight enemies coming from both sides, keep your
 multiplier climbing, and take down the **Hexacore**.
 
 ## Controls (Classic Controller)
@@ -30,7 +32,8 @@ Your rank (S / A / B / C) is shown at the end of the level.
 
 ## Level 1: Notebook Nebula
 
-A plain ruled page with faint pencil stars, planets and a smiley moon doodled in the margins of space.
+Plain ruled notebook pages with faint pencil stars, planets and a smiley moon. The pages scroll slower than the
+action (and drift a little as you climb and dive) while the doodles scroll faster, for a sense of depth.
 
 10 waves: blue spiky **Shards** that hunt you down (they shake and shout "!" before they lunge), mint **Zip** flocks,
 grumpy red **Spores** that spit bullet fans, wiggly **Serpent** caterpillars that pop segment by segment when you
@@ -41,8 +44,8 @@ mad at half health.
 
 Push this folder to a GitHub repository. The included GitHub Actions workflow
 (`.github/workflows/build.yml`) builds it in the official devkitPro container on every push.
-Open the run under the **Actions** tab and download the **nova-prism-wii** artifact; it contains `boot.dol`
-and an `apps/novaprism/` folder (boot.dol + meta.xml + icon.png) for the Homebrew Channel.
+Open the run under the **Actions** tab and download the **doodle-shooter-wii** artifact; it contains `boot.dol`
+and an `apps/doodleshooter/` folder (boot.dol + meta.xml + icon.png) for the Homebrew Channel.
 
 To build locally instead: install devkitPro (`sudo dkp-pacman -S wii-dev`) and run `make`.
 
@@ -55,7 +58,7 @@ To build locally instead: install devkitPro (`sudo dkp-pacman -S wii-dev`) and r
 4. Because everything is real geometry, raising Dolphin's **internal resolution** (2x / 3x) makes the
    game look razor sharp. On Android, 2x is a good balance.
 
-On a real Wii: copy `apps/novaprism/` to the `apps` folder on the SD card.
+On a real Wii: copy `apps/doodleshooter/` to the `apps` folder on the SD card.
 
 ## Adding levels
 
@@ -96,3 +99,6 @@ tools/test.c         native test harness, software rasterizer, bots, preview rec
 
 Handwriting font: **Gloria Hallelujah** by Kimberly Geswein, used under the SIL Open Font License 1.1
 (`tools/fonts/OFL.txt`).
+
+Ship and logo: hand-drawn art in `tools/art/` (`python3 tools/make_art.py` cuts them out of the paper and bakes them
+into `source/art_data.h`).

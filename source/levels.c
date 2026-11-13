@@ -1,5 +1,5 @@
 /*
- * NOVA PRISM - level definitions.
+ * DOODLE SHOOTER - level definitions.
  *
  * To add a level, copy the LEVEL 1 block, change the name / colours / terrain seed and write its waves
  * (style: STYLE_SKYWAY = open sky over a racetrack, STYLE_CAVE = rocky crystal cave with a bumpy ceiling and floor),
