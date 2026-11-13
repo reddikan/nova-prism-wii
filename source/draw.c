@@ -736,7 +736,7 @@ static void draw_boss2(const Game *g, const Enemy *e, float sx, float sy, float 
         static const char *HA[3] = {"HA HA!", "HEE HEE!", "HA HA HA!"};
         int w = (int)(e->t * 1.3f) % 3;
         float side = (w & 1) ? 1.0f : -1.0f;
-        gfx_text_fancy(HA[w], sx + side * (h + 40.0f), sy - h * 0.75f, 30.0f, phase2 ? C_RED : 0xA040C8FFu, 0, 0, g->time, 4.0f);
+        gfx_text_fancy(HA[w], sx + side * (h + 62.0f), fmaxf(sy - h * 0.35f, 96.0f), 30.0f, phase2 ? C_RED : 0xA040C8FFu, 0, 0, g->time, 4.0f);
     }
     if (phase2) {                                                            /* steaming mad */
         for (int k = 0; k < 2; k++) {
