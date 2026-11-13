@@ -205,17 +205,19 @@ static Input bot_input(const Game *g, int skill, uint32_t prev_held)
 }
 
 typedef struct { int cleared, deaths, wave; long score; float time; int rank; float max_mult; int max_chain; } Result;
+static Result play_level(int level, int skill, uint32_t seed, float max_time, int shots, const char *tag);
+static Result play(int skill, uint32_t seed, float max_time, int shots, const char *tag) { return play_level(0, skill, seed, max_time, shots, tag); }
 
 static Game G;
 
-static Result play(int skill, uint32_t seed, float max_time, int shots, const char *tag)
+static Result play_level(int level, int skill, uint32_t seed, float max_time, int shots, const char *tag)
 {
     Result r;
     memset(&r, 0, sizeof r);
     game_init(&G);
     G.rng = seed;
     brng = seed * 2654435761u + 1;
-    game_start(&G, 0);
+    game_start(&G, level);
     uint32_t prev = 0;
     int lives0 = G.lives;
     float t = 0;
@@ -325,7 +327,7 @@ static void reel_step(Game *g, const Input *in, int record)
     reel_t += 1.0 / 60.0;
 }
 
-static void record_reel(void)
+static void record_reel(int level)
 {
     amix_len = REEL_RATE * 90;
     amix = calloc((size_t)amix_len, sizeof(float));
@@ -333,6 +335,7 @@ static void record_reel(void)
     Input z; memset(&z, 0, sizeof z);
     game_init(g);
     g->rng = 1; brng = 2654435762u;
+    g->level = level;                                    /* the title screen's level picker */
     for (int i = 0; i < 60 * 4; i++) { if (i == 200) { z.held = z.pressed = BTN_A; } else z.held = z.pressed = 0; reel_step(g, &z, 1); }
     uint32_t prev = 0;
     float t = 0;
@@ -453,7 +456,7 @@ static void unit_tests(void)
 int main(int argc, char **argv)
 {
     if (argc > 1) outdir = argv[1];
-    if (argc > 2 && strcmp(argv[2], "reel") == 0) { record_reel(); return 0; }
+    if (argc > 2 && strcmp(argv[2], "reel") == 0) { record_reel(argc > 3 ? atoi(argv[3]) - 1 : 0); return 0; }
     int quick = argc > 2;
     unit_tests();
 
@@ -467,7 +470,25 @@ int main(int argc, char **argv)
     printf("  keen   : %s wave %d score %ld deaths %d time %.0fs rank %c mult %.1f chain %d\n", r.cleared ? "CLEARED" : "lost", r.wave + 1, r.score, r.deaths,
            (double)r.time, "SABC"[r.rank], (double)r.max_mult, r.max_chain);
 
+    printf("\nbot runs (level 2)\n");
+    r = play_level(1, 0, 78, 400, 0, "l2idle");
+    printf("  idle   : %s wave %d score %ld deaths %d\n", r.cleared ? "CLEARED" : "lost", r.wave + 1, r.score, r.deaths);
+    CHECK(!r.cleared, "doing nothing must lose level 2");
+    r = play_level(1, 2, 3, 900, 1, "l2keen");
+    printf("  keen   : %s wave %d score %ld deaths %d time %.0fs rank %c\n", r.cleared ? "CLEARED" : "lost", r.wave + 1, r.score, r.deaths, (double)r.time, "SABC"[r.rank]);
     if (!quick) {
+        for (int skill = 1; skill <= 3; skill++) {
+            int clears = 0, deaths = 0, seeds = 12; long sc = 0;
+            for (int s = 0; s < seeds; s++) {
+                Result q = play_level(1, skill, 5000u + (uint32_t)s * 77u, 900, 0, "x");
+                clears += q.cleared; deaths += q.deaths; sc += q.score;
+            }
+            printf("  L2 %s x%d: cleared %d/%d, avg deaths %.1f, avg score %ld\n", skill == 1 ? "average" : (skill == 2 ? "keen   " : "clumsy "), seeds, clears, seeds, (double)deaths / seeds, sc / seeds);
+        }
+    }
+
+    if (!quick) {
+        printf("\nbot runs (level 1, many seeds)\n");
         int seeds = 12;
         for (int skill = 1; skill <= 3; skill++) {
             int clears = 0, deaths = 0; long sc = 0; float tm = 0; int ranks[4] = {0};

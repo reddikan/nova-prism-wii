@@ -60,6 +60,19 @@ To build locally instead: install devkitPro (`sudo dkp-pacman -S wii-dev`) and r
 
 On a real Wii: copy `apps/doodleshooter/` to the `apps` folder on the SD card.
 
+## Level 2: Graph Paper Galaxy
+
+A page of graph paper, three new doodles mixed in with the level 1 crew, and a new boss:
+
+* **Saucers**: little green aliens in flying saucers that hover above or below you and fire 3-shot bursts
+  (their rim lights go red just before).
+* **Fuse bombs**: grumpy bombs that drift at you with a lit fuse. Pop them before it burns down (they flash red),
+  or they burst into a ring of bullets.
+* **Blobs**: one-eyed green blobs that split into two little blobs when you pop them.
+* **The Big Head** (boss): a pencil drawing coloured in with crayon, hoop earrings and all, with six crazy purple
+  tentacles. It whips its tentacles at you, spits bullet fans, flings rings of bullets from its earrings and
+  hiccups out little blobs. At half health it gets MAD (steam, anger mark, faster attacks, two tentacles at once).
+
 ## Adding levels
 
 Levels live in `source/levels.c`. Copy the LEVEL 1 block, give it a new name, colours and terrain seed, and
@@ -100,5 +113,5 @@ tools/test.c         native test harness, software rasterizer, bots, preview rec
 Handwriting font: **Gloria Hallelujah** by Kimberly Geswein, used under the SIL Open Font License 1.1
 (`tools/fonts/OFL.txt`).
 
-Ship and logo: hand-drawn art in `tools/art/` (`python3 tools/make_art.py` cuts them out of the paper and bakes them
+Ship, logo and the Big Head: hand-drawn art in `tools/art/` (`python3 tools/make_art.py` cuts them out of the paper and bakes them
 into `source/art_data.h`).

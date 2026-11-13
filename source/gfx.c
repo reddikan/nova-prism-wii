@@ -80,9 +80,11 @@ static uint8_t tex_solid[8 * 8] __attribute__((aligned(32)));
 static uint8_t tex_crayon[CRAYON_N * CRAYON_N] __attribute__((aligned(32)));
 static uint8_t tex_paper[PAPER_N * PAPER_N] __attribute__((aligned(32)));
 static uint8_t tex_font[FONT_W * FONT_H] __attribute__((aligned(32)));
+static uint8_t tex_font_big[FONTB_W * FONTB_H] __attribute__((aligned(32)));
 static float   work[CRAYON_N * CRAYON_N];
 static uint8_t tex_ship[SHIP_W * SHIP_H * 4] __attribute__((aligned(32)));
 static uint8_t tex_logo[LOGO_W * LOGO_H * 4] __attribute__((aligned(32)));
+static uint8_t tex_boss2[BOSS2_W * BOSS2_H * 4] __attribute__((aligned(32)));
 
 static void unpack_art(uint8_t *dst, const unsigned char *pal, const unsigned char *idx, int n)
 {
@@ -178,8 +180,13 @@ void gfx_init(void)
         tex_font[i * 2]     = (uint8_t)((FONT_PIXELS[i] >> 4) * 17);
         tex_font[i * 2 + 1] = (uint8_t)((FONT_PIXELS[i] & 15) * 17);
     }
+    for (int i = 0; i < FONTB_W * FONTB_H / 2; i++) {
+        tex_font_big[i * 2]     = (uint8_t)((FONTB_PIXELS[i] >> 4) * 17);
+        tex_font_big[i * 2 + 1] = (uint8_t)((FONTB_PIXELS[i] & 15) * 17);
+    }
     unpack_art(tex_ship, SHIP_PAL, SHIP_IDX, SHIP_W * SHIP_H);
     unpack_art(tex_logo, LOGO_PAL, LOGO_IDX, LOGO_W * LOGO_H);
+    unpack_art(tex_boss2, BOSS2_PAL, BOSS2_IDX, BOSS2_W * BOSS2_H);
 }
 
 const uint8_t *gfx_tex_data(int tex, int *w, int *h)
@@ -188,6 +195,7 @@ const uint8_t *gfx_tex_data(int tex, int *w, int *h)
     case TEX_CRAYON: *w = CRAYON_N; *h = CRAYON_N; return tex_crayon;
     case TEX_PAPER:  *w = PAPER_N;  *h = PAPER_N;  return tex_paper;
     case TEX_FONT:   *w = FONT_W;   *h = FONT_H;   return tex_font;
+    case TEX_FONT_BIG: *w = FONTB_W; *h = FONTB_H; return tex_font_big;
     default:         *w = 8;        *h = 8;        return tex_solid;
     }
 }
@@ -197,6 +205,7 @@ const uint8_t *gfx_tex_rgba(int tex, int *w, int *h)
     switch (tex) {
     case TEX_SHIP: *w = SHIP_W; *h = SHIP_H; return tex_ship;
     case TEX_LOGO: *w = LOGO_W; *h = LOGO_H; return tex_logo;
+    case TEX_BOSS2: *w = BOSS2_W; *h = BOSS2_H; return tex_boss2;
     default:       *w = 0; *h = 0; return NULL;
     }
 }
@@ -418,24 +427,31 @@ void doodle(const Poly *p, uint32_t fill, uint32_t ink, float width, uint32_t se
 /* ------------------------------------------------------------------ */
 /* handwriting                                                          */
 /* ------------------------------------------------------------------ */
-static const short *glyph_m(char ch)
+/* two copies of the handwriting: big text uses the high-resolution one so it stays crisp */
+typedef struct { int tex, bake, w, h; const short (*m)[7]; } FontSet;
+static const FontSet FS_SMALL = { TEX_FONT, FONT_BAKE, FONT_W, FONT_H, FONT_METRICS };
+static const FontSet FS_BIG   = { TEX_FONT_BIG, FONTB_BAKE, FONTB_W, FONTB_H, FONTB_METRICS };
+static const FontSet *font_for(float size) { return size >= 26.0f ? &FS_BIG : &FS_SMALL; }
+
+static const short *glyph_m(const FontSet *f, char ch)
 {
     unsigned c = (unsigned char)ch;
     if (c < 32 || c > 126) c = '?';
-    return FONT_METRICS[c - 32];
+    return f->m[c - 32];
 }
 
 float gfx_text_width(const char *s, float size)
 {
-    float k = size / (float)FONT_BAKE, w = 0;
-    for (; *s; s++) w += (float)glyph_m(*s)[6] * k;
+    const FontSet *f = font_for(size);
+    float k = size / (float)f->bake, w = 0;
+    for (; *s; s++) w += (float)glyph_m(f, *s)[6] * k;
     return w;
 }
 
-static void glyph_quad(const short *m, float x, float base, float k, float rot, uint32_t c, float ox, float oy)
+static void glyph_quad(const FontSet *f, const short *m, float x, float base, float k, float rot, uint32_t c, float ox, float oy)
 {
     float x0 = x + (float)m[4] * k + ox, y0 = base + (float)m[5] * k + oy, w = (float)m[2] * k, h = (float)m[3] * k;
-    float u0 = (float)m[0] / FONT_W, v0 = (float)m[1] / FONT_H, u1 = (float)(m[0] + m[2]) / FONT_W, v1 = (float)(m[1] + m[3]) / FONT_H;
+    float u0 = (float)m[0] / f->w, v0 = (float)m[1] / f->h, u1 = (float)(m[0] + m[2]) / f->w, v1 = (float)(m[1] + m[3]) / f->h;
     float cx = x0 + w * 0.5f, cy = y0 + h * 0.5f, cr = cosf(rot), sr = sinf(rot);
     float X[4] = {x0, x0 + w, x0 + w, x0}, Y[4] = {y0, y0, y0 + h, y0 + h}, U[4] = {u0, u1, u1, u0}, V[4] = {v0, v0, v1, v1};
     if (gfx_nv + 6 > GFX_MAX_VTX || gfx_nseg == 0) return;
@@ -462,11 +478,12 @@ void gfx_image(int tex, const float *x, const float *y, uint32_t tint)
 void gfx_text(const char *s, float x, float y, float size, uint32_t c)
 {
     if ((c & 255) == 0) return;
-    gfx_tex(TEX_FONT);
-    float k = size / (float)FONT_BAKE, base = y + size * 0.86f;
+    const FontSet *f = font_for(size);
+    gfx_tex(f->tex);
+    float k = size / (float)f->bake, base = y + size * 0.86f;
     for (; *s; s++) {
-        const short *m = glyph_m(*s);
-        if (m[2] > 0) glyph_quad(m, x, base, k, 0, c, 0, 0);
+        const short *m = glyph_m(f, *s);
+        if (m[2] > 0) glyph_quad(f, m, x, base, k, 0, c, 0, 0);
         x += (float)m[6] * k;
     }
     gfx_tex(TEX_SOLID);
@@ -477,24 +494,20 @@ void gfx_text_r(const char *s, float rx, float y, float size, uint32_t c) { gfx_
 
 void gfx_text_fancy(const char *s, float cx, float y, float size, uint32_t fill, uint32_t ink, float outline, float t, float bounce)
 {
-    if ((fill & 255) == 0) return;
-    gfx_tex(TEX_FONT);
-    float k = size / (float)FONT_BAKE, base = y + size * 0.86f;
-    float x0 = cx - gfx_text_width(s, size) * 0.5f;
-    static const float O[8][2] = {{1,0},{0.7f,0.7f},{0,1},{-0.7f,0.7f},{-1,0},{-0.7f,-0.7f},{0,-1},{0.7f,-0.7f}};
     (void)outline; (void)ink;                     /* lettering is solid colour: no outline */
-    for (int pass = 1; pass < 2; pass++) {
-        float x = x0;
-        for (int i = 0; s[i]; i++) {
-            const short *m = glyph_m(s[i]);
-            if (m[2] > 0) {
-                float by = base + sinf(t * 6.0f - (float)i * 0.7f) * bounce;
-                float rot = 0.09f * noise1(0xABCu + (uint32_t)i * 17u, t * 1.5f);
-                if (pass == 0) for (int o = 0; o < 8; o++) glyph_quad(m, x, by, k, rot, ink, O[o][0] * outline, O[o][1] * outline);
-                else glyph_quad(m, x, by, k, rot, fill, 0, 0);
-            }
-            x += (float)m[6] * k;
+    if ((fill & 255) == 0) return;
+    const FontSet *f = font_for(size);
+    gfx_tex(f->tex);
+    float k = size / (float)f->bake, base = y + size * 0.86f;
+    float x = cx - gfx_text_width(s, size) * 0.5f;
+    for (int i = 0; s[i]; i++) {
+        const short *m = glyph_m(f, s[i]);
+        if (m[2] > 0) {
+            float by = base + sinf(t * 6.0f - (float)i * 0.7f) * bounce;
+            float rot = 0.09f * noise1(0xABCu + (uint32_t)i * 17u, t * 1.5f);
+            glyph_quad(f, m, x, by, k, rot, fill, 0, 0);
         }
+        x += (float)m[6] * k;
     }
     gfx_tex(TEX_SOLID);
 }

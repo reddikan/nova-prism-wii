@@ -16,6 +16,11 @@ const EnemyStats ESTAT[EN_TYPES] = {
     /* SEG     */ {4,   15,   40,    0.1f, 1,  0xB78CFFFFu, 0x9566F0FFu, 0x5A2CB4FFu, 0xFF5FA8FFu, "SEGMENT"},
     /* BOSS    */ {650, 62,   10000, 3.0f, 40, 0xA57BFFFFu, 0x6E3FD8FFu, 0x3A1890FFu, 0xFF4FD8FFu, "HEXACORE"},
     /* SHIELD  */ {22,  20,   250,   0.3f, 3,  0xA8F8FFFFu, 0x3CC6E8FFu, 0x1D86B8FFu, 0xFFFFFFFFu, "SHIELD"},
+    /* UFO     */ {7,   19,   120,   0.3f, 3,  0xC8CCD8FFu, 0x9AA0B4FFu, 0x6A7088FFu, 0x7FE07FFFu, "SAUCER"},
+    /* BOMB    */ {3,   15,   80,    0.2f, 2,  0x5A607AFFu, 0x3A3F58FFu, 0x262A3CFFu, 0xFFD23AFFu, "BOMB"},
+    /* BLOB    */ {8,   20,   100,   0.3f, 2,  0xA8EE6AFFu, 0x7AD84AFFu, 0x4FA830FFu, 0xFFFFFFFFu, "BLOB"},
+    /* BLOBLET */ {2,   11,   30,    0.1f, 1,  0xA8EE6AFFu, 0x7AD84AFFu, 0x4FA830FFu, 0xFFFFFFFFu, "BLOBLET"},
+    /* BOSS2   */ {900, 80,   15000, 3.0f, 50, 0xFAC296FFu, 0xF0A070FFu, 0xC07050FFu, 0xA066F0FFu, "THE BIG HEAD"},
 };
 
 enum { P_SPARK, P_GLOW, P_DEBRIS, P_SMOKE, P_CONF, P_STAR };
@@ -299,6 +304,22 @@ static void spawn_group(Game *g, const SpawnGroup *sg)
         case EN_SERPENT:
             spawn_serpent(g, ax + dir * 320.0f * (float)k, clampf(ay, 160.0f, 320.0f), d * 6.0f);
             break;
+        case EN_UFO: case EN_BOMB: case EN_BLOB: {
+            float x = ax + frange(g, -220, 220), l2, h2;
+            corridor(g, x, 70.0f, &l2, &h2);
+            int e = spawn_enemy(g, sg->type, x, frange(g, l2, h2), d * 3.0f);
+            if (e >= 0 && sg->type == EN_BOMB) g->en[e].fuse = frange(g, 5.5f, 7.0f);
+            break;
+        }
+        case EN_BOSS2: {
+            int b = spawn_enemy(g, EN_BOSS2, g->px + (float)g->face * 470.0f, 190.0f, 1.9f);
+            if (b >= 0) {
+                g->boss = b;
+                g->en[b].cd = 2.6f;
+                g->boss_shown_hp = 0;
+            }
+            break;
+        }
         case EN_BOSS: {
             int b = spawn_enemy(g, EN_BOSS, g->px + (float)g->face * 470.0f, 240.0f, 1.9f);
             if (b >= 0) {
@@ -401,7 +422,7 @@ static void kill_enemy(Game *g, int i, int scored)
     Enemy *e = &g->en[i];
     if (!e->alive) return;
     const EnemyStats *s = &ESTAT[e->type];
-    if (e->type == EN_BOSS) { boss_start_death(g, i); return; }
+    if (IS_BOSS(e->type)) { boss_start_death(g, i); return; }
 
     e->alive = 0;
     float size = 1.0f;
@@ -413,6 +434,10 @@ static void kill_enemy(Game *g, int i, int scored)
     case EN_SERPENT: size = 2.6f;  shield_pct = 60; sfx(g, SFX_EXPL_M); g->hitstop = 0.07f; break;
     case EN_SEG:     size = 1.0f;  sfxp(g, SFX_EXPL_S, 110 + e->idx * 6); break;
     case EN_SHIELD:  size = 1.6f;  sfx(g, SFX_EXPL_M); g->hitstop = 0.04f; break;
+    case EN_UFO:     size = 1.7f;  shield_pct = 12; sfx(g, SFX_EXPL_M); g->hitstop = 0.04f; break;
+    case EN_BOMB:    size = 1.3f;  shield_pct = 4;  sfxp(g, SFX_EXPL_S, 100); break;
+    case EN_BLOB:    size = 1.6f;  shield_pct = 8;  sfxp(g, SFX_EXPL_M, 150); break;
+    case EN_BLOBLET: size = 0.8f;  sfxp(g, SFX_EXPL_S, 170 + (int)(rnd(g) % 20)); break;
     default: break;
     }
     explode(g, e->x, e->y, size, s->c_light, s->c_accent);
@@ -424,6 +449,17 @@ static void kill_enemy(Game *g, int i, int scored)
                 g->en[k].fuse = 0.05f + 0.07f * (float)g->en[k].idx;
         shake(g, 8.0f);
     }
+    if (e->type == EN_BLOB && g->boss_dying <= 0)       /* a blob splits into two little ones */
+        for (int k = 0; k < 2; k++) {
+            float side = k ? 1.0f : -1.0f;
+            int b = spawn_enemy(g, EN_BLOBLET, e->x + side * 12.0f, e->y, 0);
+            if (b >= 0) {
+                Enemy *o = &g->en[b];
+                o->warp = 0; o->warp_t = 1.0f;
+                o->vx = side * 190.0f; o->vy = -120.0f;
+                o->hitcd = 0.25f;
+            }
+        }
     if (e->type == EN_SEG)                                /* close the gap in the chain */
         for (int k = 0; k < MAX_EN; k++)
             if (g->en[k].alive && g->en[k].type == EN_SEG && g->en[k].parent == i) g->en[k].parent = e->parent;
@@ -447,10 +483,14 @@ static void hurt_enemy(Game *g, int i, float dmg, float kx, float ky)
 {
     Enemy *e = &g->en[i];
     if (!e->alive || e->warp) return;
-    if (e->type == EN_BOSS && g->boss_dying > 0) return;
+    if (IS_BOSS(e->type) && g->boss_dying > 0) return;
     e->hp -= dmg;
-    e->flash = e->type == EN_BOSS ? 0.45f : 0.8f;
-    if (e->type == EN_SHARD || e->type == EN_ZIP || e->type == EN_SPORE) { e->vx += kx; e->vy += ky; }
+    e->flash = IS_BOSS(e->type) ? 0.45f : 0.8f;
+    switch (e->type) {
+    case EN_SHARD: case EN_ZIP: case EN_SPORE: case EN_UFO: case EN_BOMB: case EN_BLOB: case EN_BLOBLET:
+        e->vx += kx; e->vy += ky; break;
+    default: break;
+    }
     sfxp(g, SFX_HIT, 110 + (int)(rnd(g) % 40));
     if (e->hp <= 0) kill_enemy(g, i, 1);
 }
@@ -502,7 +542,7 @@ static void respawn(Game *g)
     ring(g, g->px, g->py, 260.0f, 0.5f, 10.0f, 0xFFFFFFFFu);
     for (int i = 0; i < MAX_EN; i++) {
         Enemy *e = &g->en[i];
-        if (!e->alive || e->warp || e->type == EN_BOSS || e->type == EN_SHIELD) continue;
+        if (!e->alive || e->warp || IS_BOSS(e->type) || e->type == EN_SHIELD) continue;
         float dx = wd(g, e->x - g->px), dy = e->y - g->py;
         if (dx * dx + dy * dy < 220.0f * 220.0f) { e->vx += dx * 4.0f; e->vy += dy * 4.0f; }
     }
@@ -559,7 +599,7 @@ static int nearest_enemy(Game *g, float x, float y, float maxd, int exclude_shie
     for (int i = 0; i < MAX_EN; i++) {
         const Enemy *e = &g->en[i];
         if (!e->alive || e->warp) continue;
-        if (e->type == EN_BOSS && g->boss_dying > 0) continue;
+        if (IS_BOSS(e->type) && g->boss_dying > 0) continue;
         if (exclude_shields && e->type == EN_SHIELD) continue;
         float dx = wd(g, e->x - x), dy = e->y - y, d = dx * dx + dy * dy;
         if (d < bd) { bd = d; best = i; }
@@ -909,6 +949,114 @@ static void update_boss(Game *g, int i, float dt)
     }
 }
 
+/* a fuse bomb going off: a ring of bullets (shoot it first and it just pops) */
+static void bomb_burst(Game *g, int i)
+{
+    Enemy *e = &g->en[i];
+    e->alive = 0;
+    for (int k = 0; k < 10; k++) fire_ebullet(g, e->x, e->y, e->phase + TAU * (float)k / 10.0f, 190.0f, 1);
+    explode(g, e->x, e->y, 1.6f, 0xFFD23AFFu, 0xF0483CFFu);
+    sfx(g, SFX_EXPL_M);
+    shake(g, 6.0f);
+}
+
+/* the Big Head: hovers beside you, lashes its tentacles, spits, flings its earrings' worth of bullets */
+static void update_boss2(Game *g, int i, float dt)
+{
+    Enemy *e = &g->en[i];
+    if (g->boss_dying > 0) return;
+    int phase2 = e->hp < e->maxhp * 0.5f;
+    if (phase2 && e->idx == 0) {
+        e->idx = 1;
+        e->cd = 1.2f;
+        popup(g, VW * 0.5f, 160.0f, "now he's MAD!", 0xF0483CFFu, 1);
+        sfx(g, SFX_BOSS);
+        ring(g, e->x, e->y, 300.0f, 0.8f, 20.0f, 0xF0483CFFu);
+        shake(g, 12.0f);
+    }
+    float dx = wd(g, g->px - e->x), side = dx > 0 ? -1.0f : 1.0f;
+    float tx = g->px + side * 300.0f, ty = 168.0f + sinf(e->t * 0.8f) * 32.0f;
+    if (e->lash_t > 0) tx = e->x;                         /* plants itself while lashing */
+    e->vx = approach(e->vx, clampf(wd(g, tx - e->x) * 1.2f, -130.0f, 130.0f), dt * 2.0f);
+    e->vy = approach(e->vy, clampf((ty - e->y) * 1.5f, -100.0f, 100.0f), dt * 2.0f);
+    e->x = wrapx(g, e->x + e->vx * dt);
+    e->y += e->vy * dt;
+    if (e->lash_t > 0) e->lash_t -= dt;
+
+    /* tentacles and the big head hurt to touch */
+    if (g->alive && g->inv_t <= 0) {
+        float hx = wd(g, g->px - e->x), hy = g->py - e->y;
+        if (hx * hx + hy * hy < (e->r * 0.85f + SHIP_R) * (e->r * 0.85f + SHIP_R)) hurt_player(g);
+        float tx2[TENT_SEGS + 1], ty2[TENT_SEGS + 1];
+        for (int k = 0; k < TENT_N && g->inv_t <= 0; k++) {
+            tentacle_points(e, k, tx2, ty2);
+            for (int p = 3; p <= TENT_SEGS; p++) {
+                float ddx = wd(g, g->px - tx2[p]), ddy = g->py - ty2[p], rr = 9.0f - (float)p * 0.4f + SHIP_R * 0.8f;
+                if (ddx * ddx + ddy * ddy < rr * rr) { hurt_player(g); break; }
+            }
+        }
+    }
+
+    e->cd -= dt;
+    if (e->cd > 0 || !g->alive) return;
+    enum { LASH, LASH2, SPIT, HOOPS, SUMMON };
+    static const int P1[] = {LASH, SPIT, HOOPS, LASH, SUMMON, SPIT};
+    static const int P2[] = {LASH2, SPIT, LASH, HOOPS, LASH2, SUMMON, SPIT};
+    int atk = phase2 ? P2[e->attack % 7] : P1[e->attack % 6];
+    e->attack++;
+    e->flash = 0.3f;
+    float s = BOSS2_PIC / 190.0f;
+    switch (atk) {
+    case LASH: case LASH2: {
+        float best = 1e9f;                                 /* the tentacle nearest the player whips at them */
+        float rx[TENT_SEGS + 1], ry[TENT_SEGS + 1];
+        for (int k = 0; k < TENT_N; k++) {
+            tentacle_points(e, k, rx, ry);
+            float d = fabsf(wd(g, g->px - rx[0]));
+            if (d < best) { best = d; e->lash_k = k; }
+        }
+        tentacle_points(e, e->lash_k, rx, ry);
+        e->lash_ang = atan2f(g->py - ry[0], wd(g, g->px - rx[0]));
+        e->lash_t = LASH_TIME;
+        e->lash2 = atk == LASH2;
+        sfxp(g, SFX_FLIP, 70);
+        e->cd = phase2 ? 1.25f : 1.6f;
+        break;
+    }
+    case SPIT: {
+        float mx = e->x, my = e->y + 63.0f * s;
+        float a = atan2f(g->py - my, wd(g, g->px - mx));
+        int n = phase2 ? 3 : 2;
+        for (int k = -n; k <= n; k++) fire_ebullet(g, mx, my, a + 0.16f * (float)k, 225.0f, 1);
+        sfx(g, SFX_ESHOT);
+        e->cd = phase2 ? 1.2f : 1.5f;
+        break;
+    }
+    case HOOPS: {
+        float hx[2] = {e->x - 72.0f * s, e->x + 63.0f * s}, hy[2] = {e->y + 48.0f * s, e->y + 59.0f * s};
+        int n = phase2 ? 12 : 10;
+        for (int h = 0; h < 2; h++) {
+            for (int k = 0; k < n; k++) fire_ebullet(g, hx[h], hy[h], e->t + TAU * (float)k / (float)n, 150.0f, 0);
+            ring(g, hx[h], hy[h], 70.0f, 0.3f, 6.0f, 0xFFD23AFFu);
+        }
+        sfx(g, SFX_ESHOT);
+        e->cd = 2.0f;
+        break;
+    }
+    default: {                                             /* SUMMON: hiccups out some little blobs */
+        int n = 0;
+        for (int k = 0; k < MAX_EN; k++) n += g->en[k].alive && (g->en[k].type == EN_BLOBLET || g->en[k].type == EN_UFO);
+        for (int k = 0; k < (phase2 ? 3 : 2) && n < 8; k++, n++) {
+            int b = spawn_enemy(g, k == 2 ? EN_UFO : EN_BLOBLET, e->x + frange(g, -60, 60), e->y + 60.0f, 0.1f * (float)k);
+            (void)b;
+        }
+        popup(g, sxof(g, e->x), e->y - 110.0f, "hic!", 0x22307CFFu, 0);
+        e->cd = 1.8f;
+        break;
+    }
+    }
+}
+
 static void update_enemies(Game *g, float dt)
 {
     for (int i = 0; i < MAX_EN; i++) {
@@ -932,7 +1080,7 @@ static void update_enemies(Game *g, float dt)
                 const EnemyStats *s = &ESTAT[e->type];
                 for (int k = 0; k < 8; k++) spark(g, e->x, e->y, TAU * (float)k / 8.0f, 260.0f, 0.25f, 2.0f, s->c_light);
                 pglow(g, e->x, e->y, 0, 0, 0.25f, e->r * 3.0f, col_a(s->c_light, 0.8f));
-                if (e->type == EN_BOSS) { sfx(g, SFX_BOSS); shake(g, 10.0f); ring(g, e->x, e->y, 260.0f, 0.6f, 16.0f, 0xFF4FD8FFu); g->boss_intro = 2.5f; }
+                if (IS_BOSS(e->type)) { sfx(g, SFX_BOSS); shake(g, 10.0f); ring(g, e->x, e->y, 260.0f, 0.6f, 16.0f, 0xFF4FD8FFu); g->boss_intro = 2.5f; }
             }
             continue;
         }
@@ -1029,6 +1177,50 @@ static void update_enemies(Game *g, float dt)
         case EN_BOSS:
             update_boss(g, i, dt);
             continue;
+        case EN_BOSS2:
+            update_boss2(g, i, dt);
+            continue;
+        case EN_UFO: {                                      /* hovers above or below you, fires 3-shot bursts */
+            float sd = wd(g, e->x - g->px) > 0 ? 1.0f : -1.0f;
+            float tx = g->px + sd * 260.0f, ty = clampf(g->py + (e->phase > PI_F ? -115.0f : 115.0f), 80.0f, 400.0f) + sinf(e->t * 2.0f) * 20.0f;
+            e->vx = approach(e->vx, clampf(wd(g, tx - e->x) * 1.5f, -220.0f, 220.0f), dt * 2.0f);
+            e->vy = approach(e->vy, clampf((ty - e->y) * 1.8f, -160.0f, 160.0f), dt * 2.0f);
+            e->ang = clampf(e->vx / 500.0f, -0.3f, 0.3f);
+            if (e->idx > 0) {
+                e->fuse -= dt;
+                if (e->fuse <= 0) {
+                    fire_ebullet(g, e->x, e->y + 6.0f, atan2f(g->py - e->y, wd(g, g->px - e->x)), 250.0f, 0);
+                    sfxp(g, SFX_ESHOT, 150);
+                    e->idx--;
+                    e->fuse = 0.16f;
+                }
+            }
+            e->cd -= dt;
+            if (e->cd <= 0) {
+                e->cd = frange(g, 2.4f, 3.2f);
+                float sx = sxof(g, e->x);
+                if (g->alive && sx > 0 && sx < VW) { e->idx = 3; e->fuse = 0.0f; }
+            }
+            break;
+        }
+        case EN_BOMB: {                                     /* drifts at you with a lit fuse */
+            e->fuse -= dt;
+            if (dist < 95.0f && e->fuse > 0.9f) e->fuse = 0.9f;
+            if (e->fuse <= 0) { bomb_burst(g, i); continue; }
+            float spd = 85.0f;
+            e->vx = approach(e->vx, dx / dist * spd + cosf(e->t * 2.0f + e->phase) * 30.0f, dt * 1.5f);
+            e->vy = approach(e->vy, dy / dist * spd + sinf(e->t * 2.3f + e->phase) * 30.0f, dt * 1.5f);
+            e->ang = sinf(e->t * 3.0f) * 0.2f;
+            break;
+        }
+        case EN_BLOB: case EN_BLOBLET: {                    /* boing, boing */
+            int small = e->type == EN_BLOBLET;
+            float spd = small ? 150.0f : 70.0f, hop = small ? 2.6f : 1.5f;
+            if (!g->alive) { dx = cosf(e->phase) * 100.0f; dy = 0; dist = 100.0f; }
+            e->vx = approach(e->vx, dx / dist * spd, dt * (small ? 3.0f : 2.0f));
+            e->vy = approach(e->vy, dy / dist * spd + cosf(e->t * hop * TAU) * (small ? 70.0f : 90.0f), dt * 3.0f);
+            break;
+        }
         case EN_SHIELD: {
             if (e->parent < 0 || !g->en[e->parent].alive) { kill_enemy(g, i, 0); continue; }
             Enemy *b = &g->en[e->parent];
@@ -1053,7 +1245,8 @@ static void update_enemies(Game *g, float dt)
             float cx = wd(g, e->x - g->px), cy = e->y - g->py, rr = e->r * 0.85f + SHIP_R;
             if (cx * cx + cy * cy < rr * rr) {
                 hurt_player(g);
-                if (e->type == EN_SHARD || e->type == EN_ZIP || e->type == EN_SEG) hurt_enemy(g, i, 99.0f, 0, 0);
+                if (e->type == EN_SHARD || e->type == EN_ZIP || e->type == EN_SEG || e->type == EN_BLOBLET) hurt_enemy(g, i, 99.0f, 0, 0);
+                if (e->type == EN_BOMB && e->alive) bomb_burst(g, i);
             }
         }
     }
@@ -1237,7 +1430,7 @@ static void start_wave(Game *g, int n)
     memset(g->wave_spawned, 0, sizeof g->wave_spawned);
     const WaveDef *w = &g->L->waves[n];
     int boss = 0;
-    for (int k = 0; k < w->ngroups; k++) boss |= w->g[k].type == EN_BOSS;
+    for (int k = 0; k < w->ngroups; k++) boss |= IS_BOSS(w->g[k].type);
     g->banner_t = 2.4f;
     if (boss) {
         snprintf(g->banner, sizeof g->banner, "WARNING");
@@ -1254,7 +1447,7 @@ static void wave_complete(Game *g)
 {
     int boss_wave = 0;
     const WaveDef *w = &g->L->waves[g->wave];
-    for (int k = 0; k < w->ngroups; k++) boss_wave |= w->g[k].type == EN_BOSS;
+    for (int k = 0; k < w->ngroups; k++) boss_wave |= IS_BOSS(w->g[k].type);
     if (!g->wave_hit) {
         long bonus = 2500L * (long)(g->wave + 1);
         g->score += bonus;
@@ -1332,7 +1525,7 @@ static void update_boss_death(Game *g, float dt)
         g->zoom_kick = 0.08f;
         sfx(g, SFX_EXPL_L);
         drop_crystals(g, e->x, e->y, 40, 0);
-        long pts = (long)(ESTAT[EN_BOSS].score * g->mult + 0.5f);
+        long pts = (long)(ESTAT[e->type].score * g->mult + 0.5f);
         g->score += pts;
         char buf[24];
         snprintf(buf, sizeof buf, "+%ld", pts);

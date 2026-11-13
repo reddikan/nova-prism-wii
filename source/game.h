@@ -46,7 +46,9 @@ typedef struct {
 #define MAX_GROUPS  12
 #define MAX_WAVES   12
 
-enum { EN_SHARD, EN_ZIP, EN_SPORE, EN_SERPENT, EN_SEG, EN_BOSS, EN_SHIELD, EN_TYPES };
+enum { EN_SHARD, EN_ZIP, EN_SPORE, EN_SERPENT, EN_SEG, EN_BOSS, EN_SHIELD,
+       EN_UFO, EN_BOMB, EN_BLOB, EN_BLOBLET, EN_BOSS2, EN_TYPES };
+#define IS_BOSS(t) ((t) == EN_BOSS || (t) == EN_BOSS2)
 
 /* A spawn group inside a wave: `count` enemies of `type` appear `delay` seconds after the wave starts.
  * side: 0 = either side of the player (random), 1 = ahead, -1 = behind. */
@@ -59,6 +61,7 @@ typedef struct {
     const char *name;
     const char *boss_sub;                /* line under the boss name card */
     int         style;
+    int         paper;                   /* 0 = ruled notebook paper, 1 = graph paper */
     uint32_t    seed;                    /* terrain shape */
     float       width;                   /* world circumference (the level wraps around) */
     int         nterr;                   /* terrain control points */
@@ -85,6 +88,8 @@ typedef struct {
     int     parent, head, idx;           /* serpent: link to the piece in front, head, segment number; shield: boss + slot */
     int     attack;                      /* boss: attack pattern counter */
     float   aux;                         /* per-type scratch (zip: cruise height, boss: spiral timer) */
+    float   lash_t, lash_ang;            /* big head: tentacle lash in progress */
+    int     lash_k, lash2;
 } Enemy;
 
 typedef struct { uint8_t alive; float x, y, vx, vy, life, dmg; } Bolt;

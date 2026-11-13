@@ -72,7 +72,8 @@ static void textures_init(void)
                 for (int y = 0; y < 4; y++)
                     for (int x = 0; x < 8; x++) dst[o++] = src[(ty + y) * w + tx + x];
         DCFlushRange(dst, (u32)(w * h));
-        GX_InitTexObj(&texobj[t], dst, (u16)w, (u16)h, GX_TF_I8, GX_REPEAT, GX_REPEAT, GX_FALSE);
+        int clamp = t == TEX_FONT || t == TEX_FONT_BIG;   /* font atlases: no wrapping (the big one isn't a power of two) */
+        GX_InitTexObj(&texobj[t], dst, (u16)w, (u16)h, GX_TF_I8, clamp ? GX_CLAMP : GX_REPEAT, clamp ? GX_CLAMP : GX_REPEAT, GX_FALSE);
         GX_InitTexObjLOD(&texobj[t], GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
     }
     GX_InvalidateTexAll();

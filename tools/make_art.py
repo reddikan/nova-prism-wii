@@ -3,6 +3,7 @@
 
     tools/art/rocket_photo.jpg  -> the player's ship   (a photo of a marker-and-pencil drawing)
     tools/art/logo_source.png   -> the title logo
+    tools/art/boss2_drawing.jpg -> the level 2 boss (a pencil drawing, coloured in with crayon here)
 
 Each picture is evened out (shadows on the paper removed), cut out from the paper (everything the outside paper
 can't reach through the ink outlines stays, so the white body of the rocket and the letters stay solid),
@@ -107,6 +108,96 @@ def logo():
     return finish(im, inside, (768, 272), pad=4)
 
 
+def crayon_strokes(h, w, width, seed, angle=-0.55, density=1.0):
+    """a sheet of waxy diagonal crayon strokes (0..1), like a kid colouring in"""
+    from PIL import ImageDraw
+    rng = np.random.default_rng(seed)
+    sheet = Image.new("L", (w, h), 0)
+    d = ImageDraw.Draw(sheet)
+    for _ in range(int(w * h / (width * 70) * density)):
+        x, y = rng.uniform(-60, w + 60), rng.uniform(-60, h + 60)
+        a = angle + rng.uniform(-0.12, 0.12)
+        L = rng.uniform(width * 6, width * 18)
+        d.line([(x, y), (x + np.cos(a) * L, y + np.sin(a) * L)], fill=int(rng.uniform(150, 255)), width=int(width))
+    m = np.asarray(sheet.filter(ImageFilter.GaussianBlur(width * 0.15))).astype(np.float32) / 255.0
+    tooth = ndimage.gaussian_filter(rng.random((h, w)).astype(np.float32), width * 0.4)
+    tooth = (tooth - tooth.min()) / (tooth.max() - tooth.min() + 1e-6)
+    return np.clip(m * (0.65 + 0.5 * tooth), 0, 1)
+
+
+def boss2():
+    """the level 2 boss: a pencil drawing of a big head, coloured in with crayon (pencil lines kept on top)"""
+    im = np.asarray(Image.open(os.path.join(ART, "boss2_drawing.jpg")).convert("RGB")).astype(np.float32)
+    H, W, _ = im.shape
+    paper = np.stack([ndimage.uniform_filter(ndimage.maximum_filter(im[:, :, c], 31), 61) for c in range(3)], -1)
+    norm = np.clip(im / np.maximum(paper, 1) * 255.0, 0, 255)
+    lum = norm.mean(-1)
+    ink = lum < 160
+    lab, n = ndimage.label(ink)
+    sz = ndimage.sum(ink, lab, range(1, n + 1))
+    ink = np.isin(lab, [i + 1 for i in range(n) if sz[i] >= 40])
+    walls = ndimage.binary_closing(ink, iterations=5) | ndimage.binary_dilation(ink, iterations=2)
+    yy, xx = np.mgrid[0:H, 0:W]
+    # hoop earrings (ellipses traced from the drawing): thick gold rings, the pencil circles stay drawn on top
+    hoops = [(322.0, 1205.0, 100.0, 130.0), (1280.0, 1298.0, 142.0, 142.0)]
+    gold = np.zeros((H, W), bool)
+    hoop_zone = np.zeros((H, W), bool)
+    for cx, cy, rx, ry in hoops:
+        d = np.hypot((xx - cx) / rx, (yy - cy) / ry)
+        gold |= np.abs(d - 1.0) * min(rx, ry) < 13
+        hoop_zone |= np.abs(d - 1.0) * min(rx, ry) < 24
+    # the head: seal the gaps in the sketchy outline (ignoring the hoops), then fill it in
+    from scipy.spatial import ConvexHull
+    from PIL import ImageDraw
+    body = ink & ~hoop_zone
+    lab, n = ndimage.label(ndimage.binary_dilation(body, iterations=3))
+    sz = ndimage.sum(body, lab, range(1, n + 1))
+    body &= np.isin(lab, [i + 1 for i in range(n) if sz[i] > 400])   # the head's real lines (no stray specks)
+    ys, xs = np.nonzero(body[::4, ::4])
+    pts = np.c_[xs * 4, ys * 4]
+    hull = pts[ConvexHull(pts).vertices]
+    mask = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(mask).polygon([tuple(map(float, p)) for p in hull], fill=255)
+    inside = np.asarray(mask) > 0
+    gold &= ~(inside & ~ndimage.binary_dilation(ink, iterations=3))      # behind the face only where the pencil ring is
+    # colour regions of the drawing
+    regions, _ = ndimage.label(inside & ~walls)
+    def region_at(x, y, max_frac=0.2):
+        k = regions[y, x]
+        if k == 0:
+            return np.zeros((H, W), bool)
+        m = regions == k
+        return m if m.mean() < max_frac else np.zeros((H, W), bool)
+    col = np.zeros((H, W, 3), np.float32)
+    col[:] = (250, 190, 150)                                         # skin
+    mouth = region_at(760, 1360, 0.08)
+    col[mouth] = (205, 55, 70)
+    tongue = mouth & (np.hypot((xx - 760) / 150.0, (yy - 1420) / 55.0) < 1.0)
+    col[tongue] = (255, 120, 140)
+    for x, y in ((612, 1040), (585, 990), (955, 1050), (985, 1010)):  # eye whites
+        col[region_at(x, y, 0.01)] = (255, 255, 255)
+    for x, y in ((540, 928), (900, 928)):                             # eyebrows
+        col[region_at(x, y, 0.01)] = (110, 70, 45)
+    blush = (np.hypot((xx - 470) / 70.0, (yy - 1165) / 40.0) < 1) | (np.hypot((xx - 1070) / 75.0, (yy - 1150) / 40.0) < 1)
+    col[blush & inside] = col[blush & inside] * 0.35 + np.array([255, 110, 140]) * 0.65
+    # crayon it in: strokes over a light wash, so paper peeks through like real colouring
+    strokes = crayon_strokes(H, W, 11, 7)
+    cover = 0.45 + 0.55 * strokes
+    paper_c = np.array([250, 246, 236], np.float32)
+    rgb = paper_c * (1 - cover[..., None]) + col * cover[..., None]
+    gstrokes = crayon_strokes(H, W, 9, 11, angle=0.9)
+    gcol = np.array([255, 200, 40], np.float32) * (0.75 + 0.25 * gstrokes[..., None]) + np.array([200, 130, 10]) * (0.25 - 0.25 * gstrokes[..., None])
+    rgb = np.where(gold[..., None], gcol, rgb)
+    # pencil lines on top, a bit darker so they read at game size
+    pencil = np.clip((lum / 235.0), 0, 1) ** 1.6
+    lines = ndimage.binary_dilation(ink, iterations=1)
+    pencil = np.where(lines, pencil, np.clip(pencil * 0.35 + 0.65, 0, 1))   # real lines full strength, smudges faint
+    rgb = rgb * pencil[..., None] + np.array([40, 40, 60]) * (1 - pencil[..., None]) * 0.0
+    keep = inside | gold
+    keep = ndimage.binary_opening(keep, iterations=2)
+    return finish(rgb, keep, (256, 256), pad=3)
+
+
 def emit(f, name, img):
     q = img.quantize(colors=256, method=Image.Quantize.FASTOCTREE)
     pal = q.getpalette(rawmode="RGBA")[: 256 * 4]
@@ -123,11 +214,13 @@ def emit(f, name, img):
 
 
 if __name__ == "__main__":
-    ship, lg = rocket(), logo()
+    ship, lg, b2 = rocket(), logo(), boss2()
     ship.save(os.path.join(ART, "ship_cutout.png"))
     lg.save(os.path.join(ART, "logo_cutout.png"))
+    b2.save(os.path.join(ART, "boss2_cutout.png"))
     with open(os.path.join(HERE, "..", "source", "art_data.h"), "w") as f:
         f.write("/* Generated by tools/make_art.py from tools/art/ - hand-drawn art as palette images with alpha */\n")
         emit(f, "SHIP", ship)
         emit(f, "LOGO", lg)
+        emit(f, "BOSS2", b2)
     print("ok", ship.size, lg.size)

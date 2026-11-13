@@ -146,15 +146,35 @@ static void draw_paper(const Game *g)
             gfx_quad4(base + CR[i][0], CR[i][1] + oy, col_a(PAPER_DK, (i & 1) ? 0.10f : 0.0f), base + CR[i][2], CR[i][3] + oy, col_a(PAPER_DK, 0.08f),
                       base + CR[i][4], CR[i][5] + oy, col_a(PAPER_DK, (i & 1) ? 0.0f : 0.12f), base + CR[i][6], CR[i][7] + oy, col_a(PAPER_DK, 0.05f));
         }
-    /* ruled lines and the red margin (with the binder holes) scrolling past */
-    float first = 26.0f + posmod(oy, 21.0f) - 21.0f;
-    for (float y = first; y < VH + 10.0f; y += 21.0f) gfx_rect(-30, y, VW + 60, 1.4f, col_a(RULE, 0.85f));
+    int graph = g->L->paper == 1;
+    if (graph) {                                                /* graph paper: a fine green grid, bolder every 5 squares */
+        const float GS = 17.0f;
+        uint32_t gc = 0x8CC4B4FFu;
+        int k0 = (int)floorf(-oy / GS) - 2;
+        for (int k = k0; k < k0 + 34; k++) {
+            float y = oy + (float)k * GS;
+            if (y < -4 || y > VH + 4) continue;
+            gfx_rect(-30, y, VW + 60, (k % 5 == 0) ? 1.5f : 0.9f, col_a(gc, (k % 5 == 0) ? 0.8f : 0.5f));
+        }
+        float gx = -posmod(g->scroll * PAPER_PX, GS * 5.0f * 400.0f);   /* continuous (the page period isn't a whole number of squares) */
+        int j0 = (int)floorf(-gx / GS) - 2;
+        for (int j = j0; j < j0 + 56; j++) {
+            float x = gx + (float)j * GS;
+            if (x < -4 || x > VW + 4) continue;
+            gfx_rect(x, -30, (j % 5 == 0) ? 1.5f : 0.9f, VH + 60, col_a(gc, (j % 5 == 0) ? 0.8f : 0.5f));
+        }
+    } else {                                                    /* ruled lines */
+        float first = 26.0f + posmod(oy, 21.0f) - 21.0f;
+        for (float y = first; y < VH + 10.0f; y += 21.0f) gfx_rect(-30, y, VW + 60, 1.4f, col_a(RULE, 0.85f));
+    }
+    /* sheet edges, and on ruled paper the red margin with the binder holes, scrolling past */
     for (float base = ox; base < VW + 40.0f; base += P) {
         if (base + 70.0f < -10.0f) continue;
         /* where one sheet ends and the next begins: the new sheet's edge casts a soft shadow */
         gfx_rect(base - 1.0f, -30, 1.4f, VH + 60, col_a(0x9C8A70FFu, 0.55f));
         gfx_quad4(base - 14.0f, -30, col_a(0x7A6A50FFu, 0.0f), base - 1.0f, -30, col_a(0x7A6A50FFu, 0.22f),
                   base - 1.0f, VH + 30, col_a(0x7A6A50FFu, 0.22f), base - 14.0f, VH + 30, col_a(0x7A6A50FFu, 0.0f));
+        if (graph) continue;
         gfx_rect(base + 62, -30, 1.6f, VH + 60, col_a(MARGIN, 0.85f));
         gfx_rect(base + 66, -30, 1.0f, VH + 60, col_a(MARGIN, 0.5f));
         for (float y = 36.0f + posmod(oy, 68.0f) - 68.0f; y < VH + 20.0f; y += 68.0f) {
@@ -553,11 +573,147 @@ static void draw_boss(const Game *g, const Enemy *e, float sx, float sy, float s
     }
 }
 
+static void starburst_small(float x, float y, float r, float rot, uint32_t seed)
+{
+    Poly p; poly_clear(&p);
+    for (int k = 0; k < 10; k++) {
+        float a = rot + TAU * (float)k / 10.0f, rr = (k & 1) ? r * 0.45f : r;
+        poly_add(&p, x + cosf(a) * rr, y + sinf(a) * rr);
+    }
+    gfx_uv(x, y, 64, 0, 0);
+    crayon_fill(&p, C_YELLOW);
+    pen_poly(&p, 1, 1.2f, C_ORANGE, seed, 0.2f);
+}
+
+static void draw_ufo(const Game *g, const Enemy *e, Xf *t, uint32_t seed)
+{
+    int angry = e->cd < 0.5f || e->idx > 0;
+    xblob(t, 0, -9, 7.0f, C_GREEN, INK, 1.6f, seed + 1);                      /* the little alien */
+    xline(t, -2, -15, -5, -21, 1.4f, INK, seed + 2);
+    xline(t, 2, -15, 5, -21, 1.4f, INK, seed + 3);
+    xblob(t, -5, -21, 1.8f, C_YELLOW, INK, 1.0f, seed + 4);
+    xblob(t, 5, -21, 1.8f, C_YELLOW, INK, 1.0f, seed + 5);
+    eye(t, -2.5f, -9.5f, 2.6f, sxof(g, g->px), g->py, seed + 6);
+    eye(t, 2.5f, -9.5f, 2.6f, sxof(g, g->px), g->py, seed + 7);
+    Poly dome; poly_clear(&dome);                                            /* glass dome (just a pen line) */
+    for (int k = 0; k <= 10; k++) { float a = PI_F + PI_F * (float)k / 10.0f; xadd(&dome, t, cosf(a) * 12.0f, -3.0f + sinf(a) * 14.0f); }
+    pen_poly(&dome, 0, 1.6f, INK, seed + 8, 0.4f);
+    static const float SAUCER[8][2] = {{-24, 0}, {-16, -5}, {0, -6}, {16, -5}, {24, 0}, {16, 6}, {0, 8}, {-16, 6}};
+    shape(t, SAUCER, 8, 0xB8BCCCFFu, INK, 2.2f, seed);
+    xline(t, -22, 1, 22, 1, 1.4f, INK, seed + 9);
+    for (int k = 0; k < 3; k++) {
+        int on = angry ? ((int)(g->time * 12.0f) & 1) : (((int)(g->time * 4.0f) + k) % 3 == 0);
+        xblob(t, -12.0f + 12.0f * (float)k, 4.0f, 2.4f, angry ? (on ? C_RED : 0xFFB0B0FFu) : (on ? C_YELLOW : 0xFFF0B0FFu), INK, 1.0f, seed + 10u + (uint32_t)k);
+    }
+    if (e->flash > 0.3f) blob(t->x, t->y, 22, 10, col_a(WHITE, e->flash * 0.7f), 0, 0, seed, 0.1f);
+}
+
+static void draw_bomb(const Game *g, const Enemy *e, Xf *t, uint32_t seed)
+{
+    int warn = e->fuse < 1.6f && ((int)(g->time * (e->fuse < 0.9f ? 16.0f : 8.0f)) & 1);
+    float puff = 1.0f + (e->fuse < 0.9f ? 0.12f * (1.0f - e->fuse / 0.9f) : 0.0f);
+    t->sx *= puff; t->sy *= puff;
+    Poly f; poly_clear(&f);                                                  /* the fuse */
+    xadd(&f, t, 5, -13); xadd(&f, t, 9, -19); xadd(&f, t, 15, -21); xadd(&f, t, 18, -26);
+    pen_poly(&f, 0, 2.2f, 0x8A6A40FFu, seed + 1, 0.3f);
+    float fx, fy; xpt(t, 18, -26, &fx, &fy);
+    starburst_small(fx, fy, 5.0f + 2.0f * sinf(g->time * 40.0f), g->time * 9.0f, seed + 2);
+    xblob(t, 0, 0, 15.0f, warn ? 0xD84A4AFFu : 0x3E4460FFu, INK, 2.4f, seed);
+    static const float CAP[4][2] = {{1, -14}, {9, -16}, {11, -11}, {4, -10}};
+    shape(t, CAP, 4, 0x8A90A8FFu, INK, 1.6f, seed + 3);
+    xline(t, -9, -6, -6, -10, 2.0f, WHITE, seed + 4);                        /* shine */
+    Xf u = *t; u.c = 1; u.s = 0;
+    eye(&u, -5, 2, 3.4f, sxof(g, g->px), g->py, seed + 5);
+    eye(&u, 5, 2, 3.4f, sxof(g, g->px), g->py, seed + 6);
+    xline(&u, -9, -3, -2, -1, 1.8f, WHITE, seed + 7);
+    xline(&u, 9, -3, 2, -1, 1.8f, WHITE, seed + 8);
+    if (e->flash > 0.3f) blob(t->x, t->y, 15, 15, col_a(WHITE, e->flash * 0.7f), 0, 0, seed, 0.1f);
+}
+
+static void draw_blob(const Game *g, const Enemy *e, float sx, float sy, float sc, uint32_t seed)
+{
+    int small = e->type == EN_BLOBLET;
+    float hop = small ? 2.6f : 1.5f, sq = sinf(e->t * hop * TAU);
+    float r = e->r * sc;
+    float rx = r * (1.0f + 0.14f * sq), ry = r * (1.0f - 0.14f * sq);
+    Poly p;
+    poly_blob(&p, sx, sy, rx, ry, small ? 12 : 16, 0.1f, seed);
+    gfx_uv(sx, sy, 128, 0, 0);
+    crayon_fill(&p, small ? 0x9CE85AFFu : C_GREEN);
+    pen_poly(&p, 1, small ? 1.8f : 2.4f, INK, seed, 0.6f);
+    Xf t = xf(sx, sy, 0, sc, sc);
+    float lx = sxof(g, g->px), ly = g->py;
+    if (small) {
+        eye(&t, -3.5f, -2, 3.0f, lx, ly, seed + 1);
+        eye(&t, 3.5f, -2, 3.0f, lx, ly, seed + 2);
+    } else {
+        eye(&t, 0, -4, 8.0f, lx, ly, seed + 1);                              /* one big googly eye */
+        Poly m; poly_clear(&m);
+        for (int k = 0; k <= 6; k++) { float a = 0.5f + 2.1f * (float)k / 6.0f; xadd(&m, &t, cosf(a) * 7.0f, 6.0f + sinf(a) * 4.0f); }
+        pen_poly(&m, 0, 1.8f, INK, seed + 3, 0.2f);
+        xblob(&t, -11, 3, 2.5f, col_a(C_PINK, 0.8f), 0, 0, seed + 4);
+        xblob(&t, 11, 3, 2.5f, col_a(C_PINK, 0.8f), 0, 0, seed + 5);
+    }
+    if (e->flash > 0.3f) blob(sx, sy, rx, ry, col_a(WHITE, e->flash * 0.7f), 0, 0, seed, 0.1f);
+}
+
+/* the Big Head: your pencil drawing coloured in, with crazy crayon tentacles wiggling underneath */
+static void draw_boss2(const Game *g, const Enemy *e, float sx, float sy, float sc, uint32_t seed)
+{
+    int phase2 = e->hp < e->maxhp * 0.5f;
+    uint32_t tc = phase2 ? 0xC64AC8FFu : 0xA066F0FFu;
+    float tx[TENT_SEGS + 1], ty[TENT_SEGS + 1];
+    for (int k = 0; k < TENT_N; k++) {
+        tentacle_points(e, k, tx, ty);
+        float px[TENT_SEGS + 1], py[TENT_SEGS + 1];
+        for (int i = 0; i <= TENT_SEGS; i++) { px[i] = sx + (sxof(g, tx[i]) - sx) * sc; py[i] = sy + (ty[i] - sy) * sc; }
+        Poly p; poly_clear(&p);
+        float nx[TENT_SEGS + 1], ny[TENT_SEGS + 1], w[TENT_SEGS + 1];
+        for (int i = 0; i <= TENT_SEGS; i++) {
+            int a = i > 0 ? i - 1 : 0, b = i < TENT_SEGS ? i + 1 : TENT_SEGS;
+            float dx = px[b] - px[a], dy = py[b] - py[a], l = sqrtf(dx * dx + dy * dy) + 0.001f;
+            nx[i] = -dy / l; ny[i] = dx / l;
+            w[i] = (15.0f * (1.0f - (float)i / TENT_SEGS) + 2.5f) * sc;
+        }
+        for (int i = 0; i < TENT_SEGS; i++) poly_add(&p, px[i] + nx[i] * w[i], py[i] + ny[i] * w[i]);
+        poly_add(&p, px[TENT_SEGS], py[TENT_SEGS]);
+        for (int i = TENT_SEGS - 1; i >= 0; i--) poly_add(&p, px[i] - nx[i] * w[i], py[i] - ny[i] * w[i]);
+        gfx_uv(sx, sy, 128, 0.17f * (float)k, 0);
+        crayon_fill(&p, tc);
+        pen_poly(&p, 1, 2.2f, INK, seed + 50u + (uint32_t)k, 0.5f);
+        for (int i = 2; i < TENT_SEGS - 1; i += 2)                          /* suckers */
+            blob(px[i] + nx[i] * w[i] * 0.45f, py[i] + ny[i] * w[i] * 0.45f, w[i] * 0.38f, w[i] * 0.38f, C_PINK, INK, 1.2f, seed + 60u + (uint32_t)(k * 9 + i), 0.05f);
+    }
+    float pic = BOSS2_PIC * sc, h = pic * 0.5f;
+    float jit = e->flash > 0.3f ? 2.0f : 0.0f;
+    float bob = sinf(g->time * 2.6f) * 3.0f, rot = sinf(g->time * 1.4f) * 0.05f + (jit > 0 ? 0.04f * sinf(g->time * 60.0f) : 0.0f);
+    float sq = 1.0f + 0.03f * sinf(g->time * 5.0f);
+    Xf t = xf(sx + jit * sinf(g->time * 70.0f), sy + bob, rot, sq, 2.0f - sq);
+    float X[4], Y[4];
+    xpt(&t, -h, -h, &X[0], &Y[0]); xpt(&t, h, -h, &X[1], &Y[1]); xpt(&t, h, h, &X[2], &Y[2]); xpt(&t, -h, h, &X[3], &Y[3]);
+    uint32_t tint = phase2 ? 0xFFD0C8FFu : WHITE;
+    if (e->flash > 0.3f) tint = 0xFFC0C0FFu;
+    gfx_image(TEX_BOSS2, X, Y, tint);
+    if (phase2) {                                                            /* steaming mad */
+        for (int k = 0; k < 2; k++) {
+            float side = k ? 1.0f : -1.0f, ph = posmod(g->time * 1.4f + (float)k * 0.5f, 1.0f);
+            blob(sx + side * (h * 0.55f + ph * 12.0f), sy - h * 0.9f - ph * 34.0f, 7.0f + ph * 9.0f, 6.0f + ph * 8.0f,
+                 col_a(WHITE, 1.0f - ph), col_a(C_GREY, 1.0f - ph), 1.6f, seed + 70u + (uint32_t)k, 0.15f);
+        }
+        float ax = sx + h * 0.35f, ay = sy - h * 0.55f, s2 = 9.0f + sinf(g->time * 10.0f) * 1.5f;   /* anger mark */
+        for (int k = 0; k < 4; k++) {
+            float a = PI_F * 0.25f + PI_F * 0.5f * (float)k, ca = cosf(a), sa = sinf(a);
+            pen_line(ax + ca * s2 * 0.35f, ay + sa * s2 * 0.35f, ax + ca * s2, ay + sa * s2, 3.0f, C_RED, seed + 80u + (uint32_t)k, 0.2f);
+        }
+    }
+    (void)seed;
+}
+
 static void draw_warp(const Game *g, const Enemy *e, float sx, float sy)
 {
     if (e->warp_t < 0) return;
     float p = e->warp_t / 0.7f;
-    float big = e->type == EN_BOSS ? 3.5f : (e->type == EN_SERPENT || e->type == EN_SPORE ? 1.5f : 1.0f);
+    float big = IS_BOSS(e->type) ? 3.5f : (e->type == EN_SERPENT || e->type == EN_SPORE || e->type == EN_UFO || e->type == EN_BLOB ? 1.5f : 1.0f);
     for (int k = 0; k < 2; k++) {                                              /* orange diamonds closing in */
         float q = clampf(p * 1.25f - 0.2f * (float)k, 0, 1);
         if (q <= 0 || q >= 1) continue;
@@ -576,7 +732,7 @@ static void draw_enemies(const Game *g)
             if (!e->alive) continue;
             if ((pass == 0) != (e->type == EN_SEG)) continue;
             float sx = sxof(g, e->x), sy = e->y;
-            if (!on_screen(sx, sy, e->type == EN_BOSS ? 160.0f : 60.0f)) continue;
+            if (!on_screen(sx, sy, e->type == EN_BOSS2 ? 320.0f : (e->type == EN_BOSS ? 160.0f : 60.0f))) continue;
             if (e->warp) {
                 draw_warp(g, e, sx, sy);
                 if (e->warp_t / 0.7f < 0.6f) continue;
@@ -596,6 +752,10 @@ static void draw_enemies(const Game *g)
             case EN_SEG:     draw_segment(g, e, sx, sy, sc, seed); break;
             case EN_BOSS:    draw_boss(g, e, sx, sy, sc, seed); break;
             case EN_SHIELD:  draw_shield(g, e, &t, seed); break;
+            case EN_UFO:     draw_ufo(g, e, &t, seed); break;
+            case EN_BOMB:    draw_bomb(g, e, &t, seed); break;
+            case EN_BLOB: case EN_BLOBLET: draw_blob(g, e, sx, sy, sc, seed); break;
+            case EN_BOSS2:   draw_boss2(g, e, sx, sy, sc, seed); break;
             default: break;
             }
         }
@@ -623,7 +783,7 @@ static void draw_offscreen_markers(const Game *g)
             Poly a; poly_clear(&a);
             poly_add(&a, x + dir * 10.0f, y); poly_add(&a, x - dir * 6.0f, y - 10.0f); poly_add(&a, x - dir * 6.0f, y + 10.0f);
             gfx_uv(x, y, 64, 0, 0);
-            crayon_fill(&a, e->type == EN_BOSS ? C_YELLOW : C_RED);
+            crayon_fill(&a, IS_BOSS(e->type) ? C_YELLOW : C_RED);
             pen_poly(&a, 1, 1.8f, INK, seed, 0.4f);
         }
     }
@@ -876,8 +1036,8 @@ static void draw_minimap(const Game *g)
         const Enemy *e = &g->en[i];
         if (!e->alive || (e->warp && e->warp_t < 0)) continue;
         float mx = cx + wd(g, e->x - g->px) * scale, my = y0 + 3.0f + (e->y - WALL_TOP) / (WALL_BOT - WALL_TOP) * (h - 6.0f);
-        float s = e->type == EN_BOSS ? 4.5f : (e->type == EN_SEG || e->type == EN_SHIELD ? 1.6f : 2.4f);
-        uint32_t c = e->warp ? (((int)(g->time * 10.0f) & 1) ? INK : C_RED) : (e->type == EN_BOSS ? 0xE0A000FFu : C_RED);
+        float s = IS_BOSS(e->type) ? 4.5f : (e->type == EN_SEG || e->type == EN_SHIELD ? 1.6f : 2.4f);
+        uint32_t c = e->warp ? (((int)(g->time * 10.0f) & 1) ? INK : C_RED) : (IS_BOSS(e->type) ? 0xE0A000FFu : C_RED);
         gfx_quad4(mx - s, my, c, mx, my - s, c, mx + s, my, c, mx, my + s, c);
     }
     float py = y0 + 3.0f + (g->py - WALL_TOP) / (WALL_BOT - WALL_TOP) * (h - 6.0f), f = (float)g->face;
@@ -957,7 +1117,7 @@ static void draw_hud(const Game *g)
     if (g->boss >= 0 && g->en[g->boss].alive && !g->en[g->boss].warp) {
         float w = 260.0f, x = VW * 0.5f - w * 0.5f, y = 60.0f;
         bar(x, y, w, 12.0f, g->en[g->boss].hp / g->en[g->boss].maxhp, C_RED, 0x530u);
-        rim_text(ESTAT[EN_BOSS].name, VW * 0.5f, y + 12.0f, 16.0f, INK, 1, 0, 0);
+        rim_text(ESTAT[g->en[g->boss].type].name, VW * 0.5f, y + 12.0f, 16.0f, INK, 1, 0, 0);
     }
 
     /* score, multiplier, chain */
@@ -1033,7 +1193,7 @@ static void draw_boss_card(const Game *g)
     float t = g->boss_intro, a = clampf(t / 0.4f, 0, 1) * clampf((2.5f - t) / 0.2f, 0, 1);
     float x = VW * 0.5f + (1.0f - clampf((2.5f - t) / 0.3f, 0, 1)) * -400.0f;
     box(x - 190.0f, 300.0f, 380.0f, 74.0f, col_a(PAPER, 0.97f * a), col_a(INK, a), 2.4f, 0x610u);
-    gfx_text_fancy("HEXACORE", x, 300.0f, 44.0f, col_a(T_ORANGE, a), col_a(INK, a), 2.6f, g->time, 2.0f);
+    gfx_text_fancy(g->boss >= 0 ? ESTAT[g->en[g->boss].type].name : "BOSS", x, 300.0f, 44.0f, col_a(T_ORANGE, a), col_a(INK, a), 2.6f, g->time, 2.0f);
     ink_text(g->L->boss_sub ? g->L->boss_sub : "the boss", x, 348.0f, 18.0f, col_a(INK, a), 1);
 }
 

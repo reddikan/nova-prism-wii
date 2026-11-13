@@ -24,8 +24,8 @@
 #define GFX_MAX_VTX 160000
 #define GFX_MAX_SEG 8192
 
-enum { TEX_SOLID, TEX_CRAYON, TEX_PAPER, TEX_FONT,   /* greyscale masks (alpha = vertex alpha x mask) */
-       TEX_SHIP, TEX_LOGO,                          /* full-colour hand-drawn pictures (colour = vertex x picture) */
+enum { TEX_SOLID, TEX_CRAYON, TEX_PAPER, TEX_FONT, TEX_FONT_BIG,   /* greyscale masks (alpha = vertex alpha x mask) */
+       TEX_SHIP, TEX_LOGO, TEX_BOSS2,               /* full-colour hand-drawn pictures (colour = vertex x picture) */
        TEX_COUNT };
 #define TEX_FIRST_RGBA TEX_SHIP
 

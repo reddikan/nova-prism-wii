@@ -68,6 +68,43 @@ static inline uint32_t hash32(uint32_t x)
 }
 static inline float hashf(uint32_t x) { return (float)(hash32(x) >> 8) / 16777216.0f; }
 
+/* ---- the Big Head (level 2 boss): its tentacles are shared by the rules (collisions) and the drawing ---- */
+#define TENT_N     6
+#define TENT_SEGS  10
+#define LASH_TIME  1.15f
+#define BOSS2_PIC  190.0f                    /* size the drawing is shown at */
+
+static inline float tentacle_lash(const Enemy *e, int k)
+{
+    if (e->lash_t <= 0) return 0.0f;
+    if (k != e->lash_k && !(e->lash2 && k == (e->lash_k + 3) % TENT_N)) return 0.0f;
+    float p = 1.0f - e->lash_t / LASH_TIME;              /* 0 -> 1 */
+    if (p < 0.22f) return -0.25f * sinf(p / 0.22f * 1.5708f);   /* wind up */
+    float q = (p - 0.22f) / 0.78f;
+    return sinf(q * 3.14159f) * (q < 0.5f ? 1.0f : 1.0f - (q - 0.5f) * 0.6f);
+}
+/* points along tentacle k (world x, screen y); x[0], y[0] is the root under the chin */
+static inline void tentacle_points(const Enemy *e, int k, float *x, float *y)
+{
+    float t = e->t, amt = tentacle_lash(e, k);
+    float a = 1.5708f + ((float)k - 2.5f) * 0.3f;
+    float seg = (15.0f + 4.0f * sinf(t * 1.7f + (float)k)) * (1.0f + (amt > 0 ? amt * 2.1f : amt));
+    x[0] = e->x + ((float)k - 2.5f) * 20.0f;
+    y[0] = e->y + 72.0f;
+    for (int i = 1; i <= TENT_SEGS; i++) {
+        a += sinf(t * 6.5f + (float)k * 1.9f + (float)i * 0.75f) * 0.46f * (1.0f - (amt > 0 ? amt : 0) * 0.55f);
+        a += 0.09f * sinf(t * 2.0f + (float)k * 2.3f) * (float)i * 0.25f;      /* slow curl that builds to the tip */
+        if (amt > 0) {
+            float d = e->lash_ang - a;
+            while (d > 3.14159f) d -= 6.28318f;
+            while (d < -3.14159f) d += 6.28318f;
+            a += d * amt * 0.45f;
+        }
+        x[i] = x[i - 1] + cosf(a) * seg;
+        y[i] = y[i - 1] + sinf(a) * seg;
+    }
+}
+
 /* terrain: piecewise-linear ceiling and floor */
 static inline float terr_spacing(const Game *g) { return g->W / (float)g->L->nterr; }
 static inline float terr_at(const Game *g, const float *h, float x)
