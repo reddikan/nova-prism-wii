@@ -684,23 +684,67 @@ static void draw_boss2(const Game *g, const Enemy *e, float sx, float sy, float 
         for (int i = 2; i < TENT_SEGS - 1; i += 2)                          /* suckers */
             blob(px[i] + nx[i] * w[i] * 0.45f, py[i] + ny[i] * w[i] * 0.45f, w[i] * 0.38f, w[i] * 0.38f, C_PINK, INK, 1.2f, seed + 60u + (uint32_t)(k * 9 + i), 0.05f);
     }
+    /* the head: the drawing on a bendy mesh so her jaw can drop open when she cackles */
     float pic = BOSS2_PIC * sc, h = pic * 0.5f;
+    int laugh = boss2_laughing(e);
     float jit = e->flash > 0.3f ? 2.0f : 0.0f;
-    float bob = sinf(g->time * 2.6f) * 3.0f, rot = sinf(g->time * 1.4f) * 0.05f + (jit > 0 ? 0.04f * sinf(g->time * 60.0f) : 0.0f);
-    float sq = 1.0f + 0.03f * sinf(g->time * 5.0f);
-    Xf t = xf(sx + jit * sinf(g->time * 70.0f), sy + bob, rot, sq, 2.0f - sq);
-    float X[4], Y[4];
-    xpt(&t, -h, -h, &X[0], &Y[0]); xpt(&t, h, -h, &X[1], &Y[1]); xpt(&t, h, h, &X[2], &Y[2]); xpt(&t, -h, h, &X[3], &Y[3]);
+    if (laugh) jit += phase2 ? 2.5f : 1.2f;                                  /* shaking with laughter */
+    float bob = sinf(g->time * 2.6f) * 3.0f + (laugh ? fabsf(sinf(g->time * 13.0f)) * -4.0f : 0.0f);
+    float rot = sinf(g->time * 1.4f) * 0.06f + (laugh ? sinf(g->time * 9.0f) * (phase2 ? 0.1f : 0.06f) : 0.0f);
+    float sq = 1.0f + 0.03f * sinf(g->time * 5.0f) + (laugh ? 0.04f * sinf(g->time * 13.0f) : 0.0f);
+    float hxp = sx + jit * sinf(g->time * 70.0f), hyp = sy + bob + jit * cosf(g->time * 53.0f);
+    Xf t = xf(hxp, hyp, rot, sq * sc, (2.0f - sq) * sc);
+    float open = laugh ? 0.45f + 0.55f * fabsf(sinf(g->time * 13.0f)) : 0.12f + 0.08f * sinf(g->time * 3.0f);
+    const int N = 16;
+    float MX[17 * 17], MY[17 * 17];
+    for (int j = 0; j <= N; j++)
+        for (int i2 = 0; i2 <= N; i2++) {
+            float u = (float)i2 / N, v = (float)j / N;
+            float lip = B2_LIP_L_V + (u - B2_LIP_L_U) / (B2_LIP_R_U - B2_LIP_L_U) * (B2_LIP_R_V - B2_LIP_L_V);
+            float fy = clampf((v - lip) / 0.07f, 0, 1);
+            float gl = clampf((u - (B2_LIP_L_U - 0.02f)) / 0.14f, 0, 1), gr = clampf(((B2_LIP_R_U + 0.02f) - u) / 0.14f, 0, 1);
+            float gx = gl * gl * (3 - 2 * gl) * gr * gr * (3 - 2 * gr);
+            float lx = (u - 0.5f) * BOSS2_PIC, ly = (v - 0.5f) * BOSS2_PIC + open * 0.1f * BOSS2_PIC * fy * gx;
+            xpt(&t, lx, ly, &MX[j * (N + 1) + i2], &MY[j * (N + 1) + i2]);
+        }
     uint32_t tint = phase2 ? 0xFFD0C8FFu : WHITE;
     if (e->flash > 0.3f) tint = 0xFFC0C0FFu;
-    gfx_image(TEX_BOSS2, X, Y, tint);
+    gfx_image_mesh(TEX_BOSS2, N, N, MX, MY, tint);
+    (void)pic; (void)h;
+    /* googly pupils that follow you around (tiny and twitchy once she's mad) */
+    float lookx = sxof(g, g->px), looky = g->py;
+    const float EU[2] = {B2_EYE_L_CU, B2_EYE_R_CU}, EV[2] = {B2_EYE_L_CV, B2_EYE_R_CV};
+    const float ERX[2] = {B2_EYE_L_RX, B2_EYE_R_RX}, ERY[2] = {B2_EYE_L_RY, B2_EYE_R_RY};
+    for (int k = 0; k < 2; k++) {
+        float ex, ey;
+        xpt(&t, B2X(EU[k]), B2Y(EV[k]), &ex, &ey);
+        float pr = (phase2 ? 0.016f : 0.022f) * BOSS2_PIC * sc * (1.0f + 0.15f * sinf(g->time * 7.0f + (float)k));
+        float mx = fmaxf(ERX[k] * BOSS2_PIC * sc - pr, 2.0f), my = fmaxf(ERY[k] * BOSS2_PIC * sc - pr, 2.5f);
+        float dx = lookx - ex, dy = looky - ey, dd = sqrtf(dx * dx + dy * dy) + 0.01f;
+        float ox = dx / dd * mx, oy = dy / dd * my;
+        if (laugh && phase2) { float a = g->time * 14.0f + (float)k * 2.0f; ox = cosf(a) * mx; oy = sinf(a) * my; }   /* eyes rolling */
+        if (phase2) { ox += sinf(g->time * 61.0f + (float)k) * 1.2f; oy += cosf(g->time * 47.0f) * 1.0f; }
+        Poly p;
+        poly_blob(&p, ex + ox, ey + oy, pr, pr, 10, 0.05f, seed + 90u + (uint32_t)k);
+        gfx_uv(ex, ey, 64, 0, 0);
+        crayon_fill(&p, INK); crayon_fill(&p, INK);
+        pen_poly(&p, 1, 1.2f, INK, seed + 92u + (uint32_t)k, 0.2f);
+        blob(ex + ox - pr * 0.35f, ey + oy - pr * 0.35f, pr * 0.3f, pr * 0.3f, WHITE, 0, 0, seed + 94u + (uint32_t)k, 0);
+    }
+    /* cackling */
+    if (laugh) {
+        static const char *HA[3] = {"HA HA!", "HEE HEE!", "HA HA HA!"};
+        int w = (int)(e->t * 1.3f) % 3;
+        float side = (w & 1) ? 1.0f : -1.0f;
+        gfx_text_fancy(HA[w], sx + side * (h + 40.0f), sy - h * 0.75f, 30.0f, phase2 ? C_RED : 0xA040C8FFu, 0, 0, g->time, 4.0f);
+    }
     if (phase2) {                                                            /* steaming mad */
         for (int k = 0; k < 2; k++) {
             float side = k ? 1.0f : -1.0f, ph = posmod(g->time * 1.4f + (float)k * 0.5f, 1.0f);
-            blob(sx + side * (h * 0.55f + ph * 12.0f), sy - h * 0.9f - ph * 34.0f, 7.0f + ph * 9.0f, 6.0f + ph * 8.0f,
+            blob(hxp + side * (h * 0.55f + ph * 12.0f), hyp - h * 0.9f - ph * 34.0f, 7.0f + ph * 9.0f, 6.0f + ph * 8.0f,
                  col_a(WHITE, 1.0f - ph), col_a(C_GREY, 1.0f - ph), 1.6f, seed + 70u + (uint32_t)k, 0.15f);
         }
-        float ax = sx + h * 0.35f, ay = sy - h * 0.55f, s2 = 9.0f + sinf(g->time * 10.0f) * 1.5f;   /* anger mark */
+        float ax = hxp + h * 0.35f, ay = hyp - h * 0.55f, s2 = 9.0f + sinf(g->time * 10.0f) * 1.5f;   /* anger mark */
         for (int k = 0; k < 4; k++) {
             float a = PI_F * 0.25f + PI_F * 0.5f * (float)k, ca = cosf(a), sa = sinf(a);
             pen_line(ax + ca * s2 * 0.35f, ay + sa * s2 * 0.35f, ax + ca * s2, ay + sa * s2, 3.0f, C_RED, seed + 80u + (uint32_t)k, 0.2f);
@@ -1102,6 +1146,26 @@ static void draw_hud(const Game *g)
     mini_rocket(220.0f, 18.0f, 0.42f);
     snprintf(buf, sizeof buf, "x%d", g->lives);
     ink_text(buf, 236.0f, 6.0f, 20.0f, INK, 0);
+    /* boost charges: little lightning bolts; the one recharging fills up from the bottom */
+    for (int k = 0; k < BOOST_MAX; k++) {
+        static const float BOLT[7][2] = {{1, -11}, {-6, 1}, {-0.5f, 1}, {-3, 11}, {6, -2}, {0.5f, -2}, {4, -11}};
+        float bx = 232.0f + (float)k * 20.0f, by = 48.0f;
+        int full = k < g->boost_charges;
+        float fill = full ? 1.0f : (k == g->boost_charges ? g->boost_recharge / BOOST_RECHARGE : 0.0f);
+        Xf t = xf(bx, by, 0, 1, 1);
+        shape(&t, BOLT, 7, col_a(PAPER, 0.95f), 0, 0, 0x5F0u + (uint32_t)k);
+        if (fill > 0.02f) {
+            Poly p; poly_clear(&p);
+            float top = 11.0f - 22.0f * fill;
+            for (int i = 0; i < 7; i++) poly_add(&p, bx + BOLT[i][0], by + fmaxf(BOLT[i][1], top));
+            gfx_uv(bx, by, 64, 0, 0);
+            crayon_fill(&p, full ? C_YELLOW : 0xFFE89AFFu);
+            crayon_fill(&p, full ? C_YELLOW : 0xFFE89AFFu);
+        }
+        Poly o; poly_clear(&o);
+        for (int i = 0; i < 7; i++) poly_add(&o, bx + BOLT[i][0], by + BOLT[i][1]);
+        pen_poly(&o, 1, 1.6f, INK, 0x5F8u + (uint32_t)k, 0.3f);
+    }
     if (g->wave < g->L->nwaves) snprintf(buf, sizeof buf, "Wave %d of %d", g->wave + 1, g->L->nwaves);
     else snprintf(buf, sizeof buf, "All clear!");
     rim_text(buf, 82.0f, 36.0f, 17.0f, INK, 0, 0, 0);
@@ -1235,7 +1299,7 @@ static void draw_title(const Game *g)
 {
     title_logo(g, VW * 0.5f, 6.0f, 600.0f);
     char buf[64];
-    snprintf(buf, sizeof buf, NUM_LEVELS > 1 ? "< Level %d: %s >" : "Level %d: %s", g->level + 1, LEVELS[g->level].name);
+    snprintf(buf, sizeof buf, NUM_LEVELS > 1 ? "L  < Level %d: %s >  R" : "Level %d: %s", g->level + 1, LEVELS[g->level].name);
     rim_text(buf, VW * 0.5f, 226.0f, 24.0f, T_ORANGE, 1, 0, 0);
     if (game_best_score(g->level) > 0) {
         snprintf(buf, sizeof buf, "best: %ld", game_best_score(g->level));
@@ -1243,14 +1307,14 @@ static void draw_title(const Game *g)
     }
     if ((int)(g->time * 2.0f) & 1) gfx_text_fancy("press A to launch!", VW * 0.5f, 278.0f, 32.0f, C_RED, INK, 2.2f, g->time, 2.0f);
     /* controls, on a sticky note */
-    sticky_note(VW * 0.5f, 410.0f, 560.0f, 92.0f, -0.015f, 0xFFF08AFFu);
-    static const char *L[4] = {"A  pulse blaster", "B  nova blade", "X  swarm missiles", "Y  prism lance"};
+    sticky_note(VW * 0.5f, 410.0f, 610.0f, 92.0f, -0.015f, 0xFFF08AFFu);
+    static const char *L[4] = {"A  pulse blaster", "B  circle shield", "X  swarm missiles", "Y  power lazer"};
     for (int k = 0; k < 4; k++) {
         float x = 170.0f + (float)(k % 2) * 270.0f, y = 368.0f + (float)(k / 2) * 26.0f;
         weapon_icon(k, x - 18.0f, y + 12.0f, g->time);
         ink_text(L[k], x, y, 20.0f, INK, 0);
     }
-    ink_text("L / R  turn around     stick  fly     +  pause", VW * 0.5f, 424.0f, 17.0f, INK, 1);
+    ink_text("stick  fly     L / R  turn around     ZL / ZR  boost     +  pause", VW * 0.5f, 424.0f, 17.0f, INK, 1);
 }
 
 static void draw_pause(const Game *g)
@@ -1307,7 +1371,7 @@ static void draw_clear(const Game *g)
     gfx_tex(TEX_SOLID);
     gfx_rect(0, 0, VW, VH, col_a(PAPER, clampf(g->state_t * 1.2f, 0, 0.5f)));
     float t = g->state_t;
-    sticky_note(VW * 0.5f - 90.0f, 262.0f, 470.0f, 300.0f, -0.02f, 0xFFFDF3FFu);
+    sticky_note(330.0f, 262.0f, 500.0f, 300.0f, -0.02f, 0xFFFDF3FFu);
     gfx_text_fancy("Level clear!", VW * 0.5f, 26.0f, 64.0f, T_GREEN, INK, 3.2f, g->time, 3.0f);
     char buf[48];
     int mins = (int)(g->play_time / 60.0f), secs = (int)g->play_time % 60;
@@ -1323,9 +1387,9 @@ static void draw_clear(const Game *g)
         case 3: snprintf(buf, sizeof buf, "%d", g->kills); break;
         default: snprintf(buf, sizeof buf, "%d:%02d", mins, secs); break;
         }
-        ink_text(lab[k], 180.0f, y, 26.0f, col_a(INK, show), 0);
-        ink_text(buf, 590.0f, y, 26.0f, col_a(C_RED, show), 2);
-        pen_line(180.0f, y + 38.0f, 180.0f + 410.0f * show, y + 38.0f, 1.0f, col_a(RULE, 0.9f), 0x900u + (uint32_t)k, 0.3f);
+        ink_text(lab[k], 112.0f, y, 26.0f, col_a(INK, show), 0);
+        ink_text(buf, 552.0f, y, 26.0f, col_a(C_RED, show), 2);
+        pen_line(112.0f, y + 38.0f, 112.0f + 440.0f * show, y + 38.0f, 1.0f, col_a(RULE, 0.9f), 0x900u + (uint32_t)k, 0.3f);
     }
     if (t > 2.6f) {                                                          /* the teacher's grade */
         static const char *R[4] = {"S", "A", "B", "C"};
@@ -1394,11 +1458,11 @@ void game_render(const Game *g)
     }
 
     switch (g->state) {
-    case ST_TITLE:
-        draw_title(g);
+    case ST_TITLE:                                     /* the ship flies around behind the logo and the writing */
         gfx_view(ox, oy, 1.0f);
         draw_player(g);
         gfx_view_reset();
+        draw_title(g);
         break;
     case ST_PLAY:
     case ST_PAUSE:

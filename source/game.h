@@ -24,7 +24,8 @@ enum {
     BTN_Y     = 1 << 7,     /* Prism Lance    */
     BTN_L     = 1 << 8,     /* turn around    */
     BTN_R     = 1 << 9,     /* turn around    */
-    BTN_PLUS  = 1 << 10     /* pause          */
+    BTN_PLUS  = 1 << 10,    /* pause          */
+    BTN_BOOST = 1 << 11     /* ZL / ZR: boost dash */
 };
 
 typedef struct {
@@ -135,6 +136,8 @@ typedef struct {
     int   blade_on; float blade_ang, blade_t, blade_spin;
     float lance_charge; int lance_on; float lance_t, lance_tick, lance_y; int lance_dir;
     float trail[TRAIL_N][2]; int trail_n; float trail_t;
+    int   boost_charges; float boost_recharge, boost_t, boost_vx, boost_vy;
+    float title_sx;                       /* title screen: the ship's spot on screen */
     float wpn_flash[4];                   /* HUD tile flash for A B X Y */
     float empty_t, empty_wpn;
     uint32_t inbuf;                       /* button presses buffered across hit-stop frames */

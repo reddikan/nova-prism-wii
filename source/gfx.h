@@ -25,7 +25,7 @@
 #define GFX_MAX_SEG 8192
 
 enum { TEX_SOLID, TEX_CRAYON, TEX_PAPER, TEX_FONT, TEX_FONT_BIG,   /* greyscale masks (alpha = vertex alpha x mask) */
-       TEX_SHIP, TEX_LOGO, TEX_BOSS2,               /* full-colour hand-drawn pictures (colour = vertex x picture) */
+       TEX_SHIP, TEX_LOGO, TEX_BOSS2,               /* full-colour hand-drawn pictures, RGBA (colour = vertex x picture) */
        TEX_COUNT };
 #define TEX_FIRST_RGBA TEX_SHIP
 
@@ -59,6 +59,8 @@ const uint8_t *gfx_tex_data(int tex, int *w, int *h);          /* masks: 8 bits 
 const uint8_t *gfx_tex_rgba(int tex, int *w, int *h);          /* pictures: RGBA, 4 bytes per pixel */
 /* draw a picture texture on a quad given by its four corners (top-left, top-right, bottom-right, bottom-left) */
 void gfx_image(int tex, const float *x, const float *y, uint32_t tint);
+/* the same, bent: a grid of (nx+1) x (ny+1) corner positions, row by row (used to make the Big Head's jaw drop) */
+void gfx_image_mesh(int tex, int nx, int ny, const float *x, const float *y, uint32_t tint);
 
 void gfx_begin(void);
 void gfx_tex(int tex);

@@ -181,6 +181,7 @@ static Input bot_input(const Game *g, int skill, uint32_t prev_held)
         float s = (px * dx + py * dy) >= 0 ? 1.0f : -1.0f;
         ax += px * s * 2.0f; ay += py * s * 2.0f;
     }
+    if (skill == 2 && (ax * ax + ay * ay) > 3.5f && !(prev_held & BTN_BOOST)) held |= BTN_BOOST;   /* dash out of trouble */
     float mx = clampf(wd(g, tx - g->px) / 80.0f, -1, 1) + ax;
     float my = clampf((ty - g->py) / 50.0f, -1, 1) + ay;
     if (skill == 1) { mx += (bfr() - 0.5f) * 0.6f; my += (bfr() - 0.5f) * 0.6f; }
@@ -399,6 +400,14 @@ static void unit_tests(void)
     game_init(g);
     CHECK(g->state == ST_TITLE, "starts on title");
     idle(g, 90);
+    {   /* the ship can be flown around the title screen */
+        float x0 = g->title_sx, y0 = g->py;
+        Input in2; memset(&in2, 0, sizeof in2);
+        in2.held = BTN_RIGHT | BTN_UP;
+        for (int i = 0; i < 40; i++) game_update(g, &in2, 1.0f / 60.0f);
+        CHECK(g->title_sx > x0 + 50.0f && g->py < y0 - 50.0f, "fly the ship around the title screen");
+        idle(g, 30);
+    }
     shot(g, "title");
     press(g, BTN_A);
     CHECK(g->state == ST_PLAY, "A starts the game");
@@ -422,7 +431,16 @@ static void unit_tests(void)
     g->energy = 100;
     press(g, BTN_X);
     int nms = 0; for (int i = 0; i < MAX_MS; i++) nms += g->ms[i].alive;
-    CHECK(nms == 8, "X launches 8 missiles (got %d)", nms);
+    {
+        int on = 0;
+        for (int i = 0; i < MAX_EN; i++) {
+            float sx = sxof(g, g->en[i].x);
+            on += g->en[i].alive && !g->en[i].warp && sx > -10.0f && sx < VW + 10.0f;
+        }
+        int want = on ? ((on * 3) / 4 > 0 ? (on * 3) / 4 : 1) : 3;
+        if (want > 8) want = 8;
+        CHECK(nms >= want - 1 && nms <= want, "X locks on to 3 of every 4 baddies on screen (%d on screen, %d missiles)", on, nms);
+    }
     CHECK(fabsf(g->energy - 70.0f) < 1.0f, "missiles cost 30 energy (have %.1f)", (double)g->energy);
     press(g, BTN_Y);
     idle(g, 22);
@@ -440,6 +458,16 @@ static void unit_tests(void)
     g->energy = 5;
     press(g, BTN_Y);
     CHECK(g->lance_charge <= 0 && !g->lance_on, "no lance without energy");
+    /* boost: two charges, then it has to recharge */
+    {
+        int c0 = g->boost_charges;
+        press(g, BTN_BOOST); press(g, BTN_BOOST);
+        int c2 = g->boost_charges;
+        press(g, BTN_BOOST);
+        CHECK(c0 == 2 && c2 == 0 && g->boost_charges == 0, "boost has 2 charges (%d -> %d -> %d)", c0, c2, g->boost_charges);
+        idle(g, 60 * 6);
+        CHECK(g->boost_charges == 2, "boost recharges (%d)", g->boost_charges);
+    }
     /* pause */
     press(g, BTN_PLUS);
     CHECK(g->state == ST_PAUSE, "+ pauses");

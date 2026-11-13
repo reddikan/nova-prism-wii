@@ -82,14 +82,6 @@ static uint8_t tex_paper[PAPER_N * PAPER_N] __attribute__((aligned(32)));
 static uint8_t tex_font[FONT_W * FONT_H] __attribute__((aligned(32)));
 static uint8_t tex_font_big[FONTB_W * FONTB_H] __attribute__((aligned(32)));
 static float   work[CRAYON_N * CRAYON_N];
-static uint8_t tex_ship[SHIP_W * SHIP_H * 4] __attribute__((aligned(32)));
-static uint8_t tex_logo[LOGO_W * LOGO_H * 4] __attribute__((aligned(32)));
-static uint8_t tex_boss2[BOSS2_W * BOSS2_H * 4] __attribute__((aligned(32)));
-
-static void unpack_art(uint8_t *dst, const unsigned char *pal, const unsigned char *idx, int n)
-{
-    for (int i = 0; i < n; i++) memcpy(dst + i * 4, pal + idx[i] * 4, 4);
-}
 
 /* tileable 2D value noise on an n x n texture with `cells` grid cells per side */
 static float vnoise2(int x, int y, int n, int cells, uint32_t seed)
@@ -184,9 +176,6 @@ void gfx_init(void)
         tex_font_big[i * 2]     = (uint8_t)((FONTB_PIXELS[i] >> 4) * 17);
         tex_font_big[i * 2 + 1] = (uint8_t)((FONTB_PIXELS[i] & 15) * 17);
     }
-    unpack_art(tex_ship, SHIP_PAL, SHIP_IDX, SHIP_W * SHIP_H);
-    unpack_art(tex_logo, LOGO_PAL, LOGO_IDX, LOGO_W * LOGO_H);
-    unpack_art(tex_boss2, BOSS2_PAL, BOSS2_IDX, BOSS2_W * BOSS2_H);
 }
 
 const uint8_t *gfx_tex_data(int tex, int *w, int *h)
@@ -203,9 +192,9 @@ const uint8_t *gfx_tex_data(int tex, int *w, int *h)
 const uint8_t *gfx_tex_rgba(int tex, int *w, int *h)
 {
     switch (tex) {
-    case TEX_SHIP: *w = SHIP_W; *h = SHIP_H; return tex_ship;
-    case TEX_LOGO: *w = LOGO_W; *h = LOGO_H; return tex_logo;
-    case TEX_BOSS2: *w = BOSS2_W; *h = BOSS2_H; return tex_boss2;
+    case TEX_SHIP: *w = SHIP_W; *h = SHIP_H; return SHIP_RGBA;
+    case TEX_LOGO: *w = LOGO_W; *h = LOGO_H; return LOGO_RGBA;
+    case TEX_BOSS2: *w = BOSS2_W; *h = BOSS2_H; return BOSS2_RGBA;
     default:       *w = 0; *h = 0; return NULL;
     }
 }
@@ -472,6 +461,21 @@ void gfx_image(int tex, const float *x, const float *y, uint32_t tint)
     if (gfx_nv + 6 > GFX_MAX_VTX || gfx_nseg == 0) return;
     for (int i = 0; i < 6; i++) emit_uv(x[T[i]], y[T[i]], tint, U[T[i]], V[T[i]]);
     gfx_seg[gfx_nseg - 1].count += 6;
+    gfx_tex(TEX_SOLID);
+}
+
+void gfx_image_mesh(int tex, int nx, int ny, const float *x, const float *y, uint32_t tint)
+{
+    gfx_tex(tex);
+    for (int j = 0; j < ny; j++)
+        for (int i = 0; i < nx; i++) {
+            int a = j * (nx + 1) + i, b = a + 1, c = a + nx + 2, d = a + nx + 1;
+            float u0 = (float)i / nx, u1 = (float)(i + 1) / nx, v0 = (float)j / ny, v1 = (float)(j + 1) / ny;
+            if (gfx_nv + 6 > GFX_MAX_VTX || gfx_nseg == 0) break;
+            emit_uv(x[a], y[a], tint, u0, v0); emit_uv(x[b], y[b], tint, u1, v0); emit_uv(x[c], y[c], tint, u1, v1);
+            emit_uv(x[a], y[a], tint, u0, v0); emit_uv(x[c], y[c], tint, u1, v1); emit_uv(x[d], y[d], tint, u0, v1);
+            gfx_seg[gfx_nseg - 1].count += 6;
+        }
     gfx_tex(TEX_SOLID);
 }
 

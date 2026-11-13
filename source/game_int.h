@@ -7,6 +7,7 @@
 #include <math.h>
 #include "game.h"
 #include "gfx.h"
+#include "art_features.h"
 
 #define TAU 6.28318530718f
 #define PI_F 3.14159265359f
@@ -24,6 +25,10 @@
 #define COST_MISSILE  30.0f
 #define COST_LANCE    35.0f
 #define SHIELDS_MAX   4
+#define BOOST_MAX     2                   /* boost charges */
+#define BOOST_RECHARGE 2.6f               /* seconds to get one charge back */
+#define BOOST_TIME    0.3f
+#define BOOST_SPEED   1050.0f
 #define MINIMAP_W     280.0f
 
 /* weapon colours: A blaster, B blade, X missiles, Y lance */
@@ -72,7 +77,16 @@ static inline float hashf(uint32_t x) { return (float)(hash32(x) >> 8) / 1677721
 #define TENT_N     6
 #define TENT_SEGS  10
 #define LASH_TIME  1.15f
-#define BOSS2_PIC  190.0f                    /* size the drawing is shown at */
+#define BOSS2_PIC  205.0f                    /* size the drawing is shown at */
+/* where a feature of the picture is, relative to the head's centre */
+#define B2X(u) (((u) - 0.5f) * BOSS2_PIC)
+#define B2Y(v) (((v) - 0.5f) * BOSS2_PIC)
+/* is she cackling right now? (her jaw drops and the "HA HA" comes out) */
+static inline int boss2_laughing(const Enemy *e)
+{
+    int mad = e->hp < e->maxhp * 0.5f;
+    return e->lash_t > 0 || fmodf(e->t, mad ? 2.6f : 3.4f) < (mad ? 1.5f : 1.0f);
+}
 
 static inline float tentacle_lash(const Enemy *e, int k)
 {
@@ -90,7 +104,7 @@ static inline void tentacle_points(const Enemy *e, int k, float *x, float *y)
     float a = 1.5708f + ((float)k - 2.5f) * 0.3f;
     float seg = (15.0f + 4.0f * sinf(t * 1.7f + (float)k)) * (1.0f + (amt > 0 ? amt * 2.1f : amt));
     x[0] = e->x + ((float)k - 2.5f) * 20.0f;
-    y[0] = e->y + 72.0f;
+    y[0] = e->y + 82.0f;
     for (int i = 1; i <= TENT_SEGS; i++) {
         a += sinf(t * 6.5f + (float)k * 1.9f + (float)i * 0.75f) * 0.46f * (1.0f - (amt > 0 ? amt : 0) * 0.55f);
         a += 0.09f * sinf(t * 2.0f + (float)k * 2.3f) * (float)i * 0.25f;      /* slow curl that builds to the tip */

@@ -10,10 +10,11 @@
 Controls (Classic Controller):
 Left stick / D-Pad: fly
 A: Pulse Blaster (hold; watch the heat)
-B: Nova Blade (hold; spinning sabres, cut bullets)
-X: Swarm Missiles (8 homing missiles)
-Y: Prism Lance (screen-wide beam)
+B: Circle Shield (hold; spinning sabres, cut bullets)
+X: Swarm Missiles (homing, lock on to most baddies on screen)
+Y: Power Lazer (screen-wide beam)
 L / R: turn around
+ZL / ZR: boost (2 charges)
 +: pause
 -: 16:9 / 4:3 screen
 HOME: exit</long_description>

@@ -15,10 +15,11 @@ multiplier climbing, and take down the **Hexacore**.
 |---|---|
 | Left stick / D-Pad | fly |
 | **A** | **Pulse Blaster** - hold for rapid fire. Watch the heat ring: overheat and it locks up for a second |
-| **B** | **Nova Blade** - hold to spin twin energy sabres around the ship. Slices enemies and cuts bullets out of the air |
-| **X** | **Swarm Missiles** - 8 homing missiles that each pick a different target |
-| **Y** | **Prism Lance** - a short charge, then a screen-wide rainbow beam that pierces everything |
-| **L / R** (or ZL / ZR) | turn the ship around to shoot behind you |
+| **B** | **Circle Shield** - hold to spin twin energy sabres around the ship. Slices enemies and cuts bullets out of the air |
+| **X** | **Swarm Missiles** - homing missiles that lock on to 3 out of every 4 baddies on screen |
+| **Y** | **Power Lazer** - a short charge, then a screen-wide beam that pierces everything |
+| **L / R** | turn the ship around to shoot behind you (on the title screen: pick the level) |
+| **ZL / ZR** | boost: a quick dash. Two charges; each one recharges on its own after a couple of seconds |
 | + | pause (resume / restart / sound on-off / quit) |
 | - | switch between full 16:9 and a letterboxed picture for a 4:3 TV |
 | HOME | quit |
@@ -69,9 +70,10 @@ A page of graph paper, three new doodles mixed in with the level 1 crew, and a n
 * **Fuse bombs**: grumpy bombs that drift at you with a lit fuse. Pop them before it burns down (they flash red),
   or they burst into a ring of bullets.
 * **Blobs**: one-eyed green blobs that split into two little blobs when you pop them.
-* **The Big Head** (boss): a pencil drawing coloured in with crayon, hoop earrings and all, with six crazy purple
-  tentacles. It whips its tentacles at you, spits bullet fans, flings rings of bullets from its earrings and
-  hiccups out little blobs. At half health it gets MAD (steam, anger mark, faster attacks, two tentacles at once).
+* **The Big Head** (boss): a pencil drawing inked in bold and coloured in with crayon, hoop earrings and all, with six
+  crazy purple tentacles. She whips her tentacles at you, spits bullet fans, flings rings of bullets from her earrings and
+  hiccups out little blobs. Her googly eyes follow you around and her jaw drops open when she cackles.
+  At half health she gets MAD (steam, anger mark, rolling eyes, faster attacks, two tentacles at once).
 
 ## Adding levels
 

@@ -530,6 +530,7 @@ static void respawn(Game *g)
 {
     g->alive = 1;
     g->shields = SHIELDS_MAX;
+    g->boost_charges = BOOST_MAX;
     g->inv_t = 2.5f;
     g->pvx = g->pvy = 0;
     g->heat = 0; g->overheat = 0;
@@ -592,32 +593,31 @@ static void fire_blaster(Game *g)
     }
 }
 
-static int nearest_enemy(Game *g, float x, float y, float maxd, int exclude_shields)
-{
-    int best = -1;
-    float bd = maxd * maxd;
-    for (int i = 0; i < MAX_EN; i++) {
-        const Enemy *e = &g->en[i];
-        if (!e->alive || e->warp) continue;
-        if (IS_BOSS(e->type) && g->boss_dying > 0) continue;
-        if (exclude_shields && e->type == EN_SHIELD) continue;
-        float dx = wd(g, e->x - x), dy = e->y - y, d = dx * dx + dy * dy;
-        if (d < bd) { bd = d; best = i; }
-    }
-    return best;
-}
 
 static void fire_missiles(Game *g)
 {
+    /* the swarm only locks on to 3 out of every 4 baddies on screen (nearest first) */
+    int onscreen = 0;
+    for (int i = 0; i < MAX_EN; i++) {
+        const Enemy *e = &g->en[i];
+        if (!e->alive || e->warp) continue;
+        float sx = sxof(g, e->x);
+        if (sx > -10.0f && sx < VW + 10.0f && e->y > -10.0f && e->y < VH + 10.0f) onscreen++;
+    }
+    int want = (onscreen * 3) / 4;
+    if (onscreen > 0 && want < 1) want = 1;
+    if (want > 8) want = 8;
     int targets[8], nt = 0;
     int used[MAX_EN];
     memset(used, 0, sizeof used);
-    for (int k = 0; k < 8; k++) {                         /* up to 8 different nearest targets */
+    for (int k = 0; k < want; k++) {
         int best = -1;
-        float bd = 950.0f * 950.0f;
+        float bd = 1e12f;
         for (int i = 0; i < MAX_EN; i++) {
             const Enemy *e = &g->en[i];
             if (!e->alive || e->warp || used[i]) continue;
+            float sx = sxof(g, e->x);
+            if (sx < -10.0f || sx > VW + 10.0f) continue;
             float dx = wd(g, e->x - g->px), dy = e->y - g->py, d = dx * dx + dy * dy;
             if (dx * (float)g->face < 0) d *= 1.6f;       /* prefer what's in front */
             if (d < bd) { bd = d; best = i; }
@@ -626,8 +626,9 @@ static void fire_missiles(Game *g)
         used[best] = 1;
         targets[nt++] = best;
     }
+    int launch = nt > 0 ? nt : 3;                         /* nothing to lock on to: a few go out anyway */
     float fwd = g->face > 0 ? 0.0f : PI_F;
-    for (int k = 0; k < 8; k++) {
+    for (int k = 0; k < launch; k++) {
         for (int i = 0; i < MAX_MS; i++) {
             Missile *m = &g->ms[i];
             if (m->alive) continue;
@@ -638,7 +639,7 @@ static void fire_missiles(Game *g)
             m->speed = 330.0f;
             m->vx = cosf(a) * m->speed + g->pvx * 0.5f; m->vy = sinf(a) * m->speed;
             m->life = 2.6f;
-            m->target = nt ? targets[k % nt] : -1;
+            m->target = k < nt ? targets[k] : -1;
             m->wob = frange(g, 0, TAU);
             break;
         }
@@ -659,7 +660,7 @@ static void missile_explode(Game *g, Missile *m)
         Enemy *e = &g->en[i];
         if (!e->alive || e->warp) continue;
         float dx = wd(g, e->x - m->x), dy = e->y - m->y;
-        float rr = 70.0f + e->r;
+        float rr = 40.0f + e->r;
         if (dx * dx + dy * dy < rr * rr) hurt_enemy(g, i, 6.0f, dx * 2.0f, dy * 2.0f);
     }
 }
@@ -704,18 +705,11 @@ static void fire_lance(Game *g)
     g->wpn_flash[3] = 1.0f;
 }
 
-static void update_player(Game *g, const Input *in, uint32_t pressed, float dt)
+/* flying the rocket: stick or d-pad, L / R to turn around, ZL / ZR to boost. On the title screen (title = 1)
+ * the ship flies freely around the screen and L / R are left for picking the level. */
+static void move_ship(Game *g, const Input *in, uint32_t pressed, float dt, int title)
 {
-    if (!g->alive) {
-        if (g->respawn_t > 0) {
-            g->respawn_t -= dt;
-            if (g->respawn_t <= 0) respawn(g);
-        }
-        return;
-    }
     uint32_t held = in->held;
-
-    /* --- movement (stick or d-pad) --- */
     float ix = in->sx, iy = in->sy;
     if (held & BTN_LEFT)  ix = -1;
     if (held & BTN_RIGHT) ix = 1;
@@ -727,30 +721,86 @@ static void update_player(Game *g, const Input *in, uint32_t pressed, float dt)
     float acc = 9.0f;
     g->pvx = approach(g->pvx, ix * spd, dt * acc);
     g->pvy = approach(g->pvy, iy * spd, dt * acc);
-    g->px = wrapx(g, g->px + g->pvx * dt);
-    g->py += g->pvy * dt;
-    float top = terr_top(g, g->px) + 16.0f, bot = terr_bot(g, g->px) - 16.0f;
-    if (g->py < top) {
-        if (g->pvy < -150.0f) for (int k = 0; k < 5; k++) spark(g, g->px, top - 10, frange(g, 0.2f, 2.9f), frange(g, 100, 260), 0.25f, 2.0f, 0xFFE0F0FFu);
-        g->py = top; g->pvy = fabsf(g->pvy) * 0.4f;
+
+    /* --- boost: a quick dash, two charges that each come back on their own --- */
+    if ((pressed & BTN_BOOST) && g->boost_charges > 0) {
+        float bx = ix, by = iy;
+        if (im < 0.2f) { bx = (float)g->face; by = 0; }
+        float bl = sqrtf(bx * bx + by * by);
+        g->boost_vx = bx / bl * BOOST_SPEED; g->boost_vy = by / bl * BOOST_SPEED;
+        g->boost_t = BOOST_TIME;
+        g->boost_charges--;
+        if (g->boost_charges < BOOST_MAX && g->boost_recharge <= 0) g->boost_recharge = 0;
+        sfxp(g, SFX_BLADE, 175);
+        sfxp(g, SFX_FLIP, 90);
+        shake(g, 3.0f);
+        for (int k = 0; k < 4; k++)
+            newpart(g, P_SMOKE, g->px - bx / bl * 30.0f, g->py - by / bl * 30.0f, frange(g, -60, 60) - bx / bl * 80.0f, frange(g, -60, 60) - by / bl * 80.0f, 0.5f, frange(g, 8, 12), 0xFFFFFFC0u);
     }
-    if (g->py > bot) {
-        if (g->pvy > 150.0f) for (int k = 0; k < 5; k++) spark(g, g->px, bot + 10, frange(g, -2.9f, -0.2f), frange(g, 100, 260), 0.25f, 2.0f, 0xFFE0F0FFu);
-        g->py = bot; g->pvy = -fabsf(g->pvy) * 0.4f;
+    if (g->boost_t > 0) {
+        float k = g->boost_t / BOOST_TIME;
+        g->pvx = lerpf(g->pvx, g->boost_vx, k);
+        g->pvy = lerpf(g->pvy, g->boost_vy, k);
+        g->boost_t -= dt;
+        if ((g->frame & 1) == 0)                          /* speed lines */
+            spark(g, g->px + frange(g, -10, 10), g->py + frange(g, -14, 14), atan2f(-g->boost_vy, -g->boost_vx), frange(g, 300, 500), 0.18f, 2.0f, 0xFFFFFFFFu);
+    }
+    if (g->boost_charges < BOOST_MAX) {
+        g->boost_recharge += dt;
+        if (g->boost_recharge >= BOOST_RECHARGE) {
+            g->boost_charges++;
+            g->boost_recharge = 0;
+            sfxp(g, SFX_CRYSTAL, 100);
+        }
+    } else g->boost_recharge = 0;
+
+    if (title) {                                         /* free flight around the title screen */
+        g->title_sx = clampf(g->title_sx + g->pvx * dt, 45.0f, VW - 45.0f);
+        g->py = clampf(g->py + g->pvy * dt, 40.0f, VH - 40.0f);
+        g->px = wrapx(g, g->camx - VW * 0.5f + g->title_sx);
+        if (ix * (float)g->face < -0.5f && g->flip_t <= 0) {    /* turn to face the way you're flying */
+            g->face = -g->face; g->flip_t = 1.0f; g->flip_dir = 1.0f;
+            sfxp(g, SFX_FLIP, 130);
+        }
+    } else {
+        g->px = wrapx(g, g->px + g->pvx * dt);
+        g->py += g->pvy * dt;
+        float top = terr_top(g, g->px) + 16.0f, bot = terr_bot(g, g->px) - 16.0f;
+        if (g->py < top) {
+            if (g->pvy < -150.0f) for (int k = 0; k < 5; k++) spark(g, g->px, top - 10, frange(g, 0.2f, 2.9f), frange(g, 100, 260), 0.25f, 2.0f, 0xFFE0F0FFu);
+            g->py = top; g->pvy = fabsf(g->pvy) * 0.4f;
+        }
+        if (g->py > bot) {
+            if (g->pvy > 150.0f) for (int k = 0; k < 5; k++) spark(g, g->px, bot + 10, frange(g, -2.9f, -0.2f), frange(g, 100, 260), 0.25f, 2.0f, 0xFFE0F0FFu);
+            g->py = bot; g->pvy = -fabsf(g->pvy) * 0.4f;
+        }
+        /* --- turn around --- */
+        if (pressed & (BTN_L | BTN_R)) {
+            g->face = -g->face;
+            g->flip_t = 1.0f;
+            g->flip_dir = (pressed & BTN_L) ? -1.0f : 1.0f;
+            sfxp(g, SFX_FLIP, (pressed & BTN_L) ? 120 : 136);
+            ring(g, g->px, g->py, 46.0f, 0.2f, 4.0f, 0xFFE9A0FFu);
+            for (int k = 0; k < 10; k++)
+                spark(g, g->px, g->py, frange(g, 0, TAU), frange(g, 120, 300), 0.2f, 2.0f, (k & 1) ? 0xFFE9A0FFu : COL_A);
+        }
     }
     g->tilt = approach(g->tilt, clampf(g->pvy / SHIP_SPEED, -1, 1) * 0.32f, dt * 10.0f);
-
-    /* --- turn around --- */
-    if (pressed & (BTN_L | BTN_R)) {
-        g->face = -g->face;
-        g->flip_t = 1.0f;
-        g->flip_dir = (pressed & BTN_L) ? -1.0f : 1.0f;
-        sfxp(g, SFX_FLIP, (pressed & BTN_L) ? 120 : 136);
-        ring(g, g->px, g->py, 46.0f, 0.2f, 4.0f, 0xFFE9A0FFu);
-        for (int k = 0; k < 10; k++)
-            spark(g, g->px, g->py, frange(g, 0, TAU), frange(g, 120, 300), 0.2f, 2.0f, (k & 1) ? 0xFFE9A0FFu : COL_A);
-    }
     if (g->flip_t > 0) g->flip_t -= dt / 0.24f;
+}
+
+static void update_player(Game *g, const Input *in, uint32_t pressed, float dt)
+{
+    if (!g->alive) {
+        if (g->respawn_t > 0) {
+            g->respawn_t -= dt;
+            if (g->respawn_t <= 0) respawn(g);
+        }
+        return;
+    }
+    uint32_t held = in->held;
+
+    move_ship(g, in, pressed, dt, 0);
 
     /* --- A: Pulse Blaster --- */
     g->shot_cd -= dt;
@@ -969,7 +1019,7 @@ static void update_boss2(Game *g, int i, float dt)
     if (phase2 && e->idx == 0) {
         e->idx = 1;
         e->cd = 1.2f;
-        popup(g, VW * 0.5f, 160.0f, "now he's MAD!", 0xF0483CFFu, 1);
+        popup(g, VW * 0.5f, 160.0f, "now she's MAD!", 0xF0483CFFu, 1);
         sfx(g, SFX_BOSS);
         ring(g, e->x, e->y, 300.0f, 0.8f, 20.0f, 0xF0483CFFu);
         shake(g, 12.0f);
@@ -1005,7 +1055,6 @@ static void update_boss2(Game *g, int i, float dt)
     int atk = phase2 ? P2[e->attack % 7] : P1[e->attack % 6];
     e->attack++;
     e->flash = 0.3f;
-    float s = BOSS2_PIC / 190.0f;
     switch (atk) {
     case LASH: case LASH2: {
         float best = 1e9f;                                 /* the tentacle nearest the player whips at them */
@@ -1024,7 +1073,7 @@ static void update_boss2(Game *g, int i, float dt)
         break;
     }
     case SPIT: {
-        float mx = e->x, my = e->y + 63.0f * s;
+        float mx = e->x + B2X(B2_MOUTH_U), my = e->y + B2Y(B2_MOUTH_V) - 10.0f;
         float a = atan2f(g->py - my, wd(g, g->px - mx));
         int n = phase2 ? 3 : 2;
         for (int k = -n; k <= n; k++) fire_ebullet(g, mx, my, a + 0.16f * (float)k, 225.0f, 1);
@@ -1033,7 +1082,7 @@ static void update_boss2(Game *g, int i, float dt)
         break;
     }
     case HOOPS: {
-        float hx[2] = {e->x - 72.0f * s, e->x + 63.0f * s}, hy[2] = {e->y + 48.0f * s, e->y + 59.0f * s};
+        float hx[2] = {e->x + B2X(B2_HOOP_L_U), e->x + B2X(B2_HOOP_R_U)}, hy[2] = {e->y + B2Y(B2_HOOP_L_V), e->y + B2Y(B2_HOOP_R_V)};
         int n = phase2 ? 12 : 10;
         for (int h = 0; h < 2; h++) {
             for (int k = 0; k < n; k++) fire_ebullet(g, hx[h], hy[h], e->t + TAU * (float)k / (float)n, 150.0f, 0);
@@ -1295,7 +1344,7 @@ static void update_projectiles(Game *g, float dt)
         if (!m->alive) continue;
         m->life -= dt;
         float age = 2.6f - m->life;
-        if (m->target >= 0 && (!g->en[m->target].alive || g->en[m->target].warp)) m->target = nearest_enemy(g, m->x, m->y, 700.0f, 0);
+        if (m->target >= 0 && (!g->en[m->target].alive || g->en[m->target].warp)) m->target = -1;   /* its target's gone: fly on */
         float ang = atan2f(m->vy, m->vx);
         if (m->target >= 0 && age > 0.12f) {
             const Enemy *e = &g->en[m->target];
@@ -1628,6 +1677,10 @@ void game_init(Game *g)
     build_terrain(g);
     g->boss = -1;
     g->fade = 1.0f;
+    g->face = 1;
+    g->title_sx = VW * 0.3f; g->py = 336.0f;
+    g->boost_charges = BOOST_MAX;
+    g->camx = 0;
     audio_init();
 }
 
@@ -1653,6 +1706,7 @@ void game_start(Game *g, int level)
     g->px = 0; g->py = 240;
     g->camx = g->px + 150.0f; g->cam_lead = 150.0f;
     g->shields = SHIELDS_MAX; g->lives = 2;
+    g->boost_charges = BOOST_MAX;
     g->alive = 1;
     g->energy = ENERGY_MAX;
     g->mult = 1.0f; g->best_mult = 1.0f;
@@ -1678,16 +1732,21 @@ void game_update(Game *g, const Input *in, float dt)
     case ST_TITLE: {
         g->camx = wrapx(g, g->camx + dt * 90.0f);
         g->scroll += dt * 90.0f;
-        g->px = wrapx(g, g->camx - 120.0f + sinf(g->time * 0.8f) * 60.0f);
-        g->py = 336.0f + sinf(g->time * 1.3f) * 6.0f;
-        g->face = 1; g->alive = 1;
-        if (NUM_LEVELS > 1 && (pressed & (BTN_LEFT | BTN_RIGHT))) {
-            g->level = (g->level + ((pressed & BTN_RIGHT) ? 1 : NUM_LEVELS - 1)) % NUM_LEVELS;
+        g->alive = 1;
+        move_ship(g, in, pressed, dt, 1);
+        if (g->trail_t -= dt, g->trail_t <= 0) {
+            g->trail_t = 1.0f / 60.0f;
+            memmove(&g->trail[1], &g->trail[0], sizeof(g->trail[0]) * (TRAIL_N - 1));
+            g->trail[0][0] = g->px - (float)g->face * 40.0f; g->trail[0][1] = g->py;
+            if (g->trail_n < TRAIL_N) g->trail_n++;
+        }
+        if (NUM_LEVELS > 1 && (pressed & (BTN_L | BTN_R))) {
+            g->level = (g->level + ((pressed & BTN_R) ? 1 : NUM_LEVELS - 1)) % NUM_LEVELS;
             g->L = &LEVELS[g->level]; g->W = g->L->width; build_terrain(g);
             sfx(g, SFX_MOVE);
         }
         if ((g->frame % 4) == 0)
-            spark(g, g->px - 42.0f, g->py, PI_F + frange(g, -0.2f, 0.2f), frange(g, 200, 400), 0.4f, 3.0f, (g->frame & 4) ? 0xFF9A2AFFu : 0xFFD23AFFu);
+            spark(g, g->px - (float)g->face * 42.0f, g->py, (g->face > 0 ? PI_F : 0.0f) + frange(g, -0.2f, 0.2f), frange(g, 200, 400), 0.4f, 3.0f, (g->frame & 4) ? 0xFF9A2AFFu : 0xFFD23AFFu);
         if (pressed & (BTN_A | BTN_PLUS)) { game_start(g, g->level); return; }
         update_particles(g, dt);
         update_feel(g, dt);

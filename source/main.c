@@ -37,23 +37,24 @@ static volatile int quit;
 static Game        game;
 static GXTexObj    texobj[TEX_COUNT];
 
-/* full-colour pictures: RGB5A3 (opaque texels 5:5:5, see-through ones 3:4:4:4) in 4x4 tiles */
+/* full-colour pictures: RGBA8, which the GPU stores as 4x4 tiles of 64 bytes (16 alpha/red pairs, then 16 green/blue pairs) */
 static void upload_picture(int t)
 {
     int w, h;
     const uint8_t *src = gfx_tex_rgba(t, &w, &h);
-    u16 *dst = memalign(32, (size_t)(w * h * 2));
+    uint8_t *dst = memalign(32, (size_t)(w * h * 4));
     int o = 0;
     for (int ty = 0; ty < h; ty += 4)
-        for (int tx = 0; tx < w; tx += 4)
-            for (int y = 0; y < 4; y++)
-                for (int x = 0; x < 4; x++) {
-                    const uint8_t *p = src + ((ty + y) * w + tx + x) * 4;
-                    if (p[3] >= 0xF8) dst[o++] = (u16)(0x8000 | ((p[0] >> 3) << 10) | ((p[1] >> 3) << 5) | (p[2] >> 3));
-                    else              dst[o++] = (u16)(((p[3] >> 5) << 12) | ((p[0] >> 4) << 8) | ((p[1] >> 4) << 4) | (p[2] >> 4));
-                }
-    DCFlushRange(dst, (u32)(w * h * 2));
-    GX_InitTexObj(&texobj[t], dst, (u16)w, (u16)h, GX_TF_RGB5A3, GX_CLAMP, GX_CLAMP, GX_FALSE);
+        for (int tx = 0; tx < w; tx += 4) {
+            for (int k = 0; k < 16; k++) {
+                const uint8_t *p = src + ((ty + k / 4) * w + tx + k % 4) * 4;
+                dst[o + k * 2] = p[3]; dst[o + k * 2 + 1] = p[0];
+                dst[o + 32 + k * 2] = p[1]; dst[o + 32 + k * 2 + 1] = p[2];
+            }
+            o += 64;
+        }
+    DCFlushRange(dst, (u32)(w * h * 4));
+    GX_InitTexObj(&texobj[t], dst, (u16)w, (u16)h, GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_FALSE);
     GX_InitTexObjLOD(&texobj[t], GX_LINEAR, GX_LINEAR, 0.0f, 0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
 }
 
@@ -238,8 +239,9 @@ static u32 read_input(Input *in)
     if (h & WPAD_CLASSIC_BUTTON_B)     b |= BTN_B;
     if (h & WPAD_CLASSIC_BUTTON_X)     b |= BTN_X;
     if (h & WPAD_CLASSIC_BUTTON_Y)     b |= BTN_Y;
-    if (h & (WPAD_CLASSIC_BUTTON_FULL_L | WPAD_CLASSIC_BUTTON_ZL)) b |= BTN_L;
-    if (h & (WPAD_CLASSIC_BUTTON_FULL_R | WPAD_CLASSIC_BUTTON_ZR)) b |= BTN_R;
+    if (h & WPAD_CLASSIC_BUTTON_FULL_L) b |= BTN_L;                                   /* L / R: turn around */
+    if (h & WPAD_CLASSIC_BUTTON_FULL_R) b |= BTN_R;
+    if (h & (WPAD_CLASSIC_BUTTON_ZL | WPAD_CLASSIC_BUTTON_ZR)) b |= BTN_BOOST;        /* ZL / ZR: boost */
     if (h & WPAD_CLASSIC_BUTTON_PLUS)  b |= BTN_PLUS;
     if (h & WPAD_CLASSIC_BUTTON_MINUS) b |= X_MINUS;
     if ((h & WPAD_CLASSIC_BUTTON_HOME) || (h & WPAD_BUTTON_HOME)) b |= X_HOME;
