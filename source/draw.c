@@ -256,8 +256,235 @@ static void draw_space_doodles(const Game *g, float factor, int n, uint32_t seed
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* level 3: a construction paper collage                               */
+/* ------------------------------------------------------------------ */
+#define CP_SKY    0x7DB4E6FFu
+#define CP_RED    0xD8443AFFu
+#define CP_ORANGE 0xF08A2EFFu
+#define CP_YELLOW 0xF6CF48FFu
+#define CP_GREEN  0x52AC4AFFu
+#define CP_GREEN_D 0x2F7D3CFFu
+#define CP_BLUE_D 0x3352A8FFu
+#define CP_PURPLE 0x7C4EAEFFu
+#define CP_PINK   0xF08AB8FFu
+#define CP_WHITE  0xF6F2E8FFu
+
+/* one cut-out: a drop shadow on the layer below, the paper, and a faint pale cut edge */
+static void cutout(const Poly *p, uint32_t col, float lift, uint32_t seed)
+{
+    Poly s = *p;
+    for (int i = 0; i < s.n; i++) { s.x[i] += lift; s.y[i] += lift * 1.3f; }
+    gfx_tex(TEX_SOLID);
+    paper_fill(&s, 0x1A204060u);
+    gfx_uv(p->x[0], p->y[0], 150.0f, hf(seed) , hf(seed + 1));
+    paper_fill(p, col);
+    pen_poly(p, 1, 1.1f, col_a(col_mix(col, WHITE, 0.55f), 0.55f), seed, 0.25f);
+}
+
+/* jitter a shape a hair each boil frame, like the paper bits were re-photographed */
+static void cp_jit(Poly *p, uint32_t seed)
+{
+    float jx = (hf(seed + (uint32_t)boil * 17u) - 0.5f) * 1.4f, jy = (hf(seed + (uint32_t)boil * 23u) - 0.5f) * 1.4f;
+    for (int i = 0; i < p->n; i++) { p->x[i] += jx; p->y[i] += jy; }
+}
+
+static void cp_circle(Poly *p, float x, float y, float r, uint32_t seed)
+{
+    poly_blob(p, x, y, r, r, r > 40 ? 30 : 18, 0.025f, seed);    /* scissor-cut: nearly round, a few flat bits */
+}
+
+static void cp_star(Poly *p, float x, float y, float r, float rot)
+{
+    poly_clear(p);
+    for (int k = 0; k < 10; k++) {
+        float a = rot - PI_F * 0.5f + PI_F * (float)k / 5.0f, rr = (k & 1) ? r * 0.46f : r;
+        poly_add(p, x + cosf(a) * rr, y + sinf(a) * rr);
+    }
+}
+
+static void cp_cloud(float x, float y, float w, uint32_t col, uint32_t seed)
+{
+    Poly p; poly_clear(&p);
+    int bumps = 4 + (int)(hf(seed) * 3.0f);
+    for (int k = 0; k <= bumps; k++) {                      /* scalloped top, cut in one go */
+        float cx = x - w * 0.5f + w * (float)k / (float)bumps, br = w / (float)bumps * (0.55f + 0.25f * hf(seed + (uint32_t)k));
+        for (int j = 0; j <= 6; j++) { float a = PI_F + PI_F * (float)j / 6.0f; poly_add(&p, cx + cosf(a) * br, y + sinf(a) * br * 1.1f); }
+    }
+    poly_add(&p, x + w * 0.5f + w * 0.1f, y + w * 0.12f);
+    poly_add(&p, x - w * 0.5f - w * 0.1f, y + w * 0.12f);
+    cp_jit(&p, seed);
+    cutout(&p, col, 4.0f, seed);
+}
+
+static void draw_cpaper(const Game *g)
+{
+    float oy = (240.0f - g->py) * PAPER_PY;
+    gfx_tex(TEX_SOLID);
+    gfx_rect(-30, -30, VW + 60, VH + 60, CP_SKY);
+    gfx_tex(TEX_CPAPER);
+    float ox = -posmod(g->scroll * PAPER_PX, 128.0f * 2.4f);
+    gfx_uv(ox, oy, 2.4f * 128.0f / 128.0f * 128.0f, 0, 0);
+    gfx_rect(-30, -30, VW + 60, VH + 60, col_a(0xC8E2FAFFu, 0.5f));
+    gfx_uv(ox + 37.0f, oy + 11.0f, 160.0f, 0.37f, 0.61f);
+    gfx_rect(-30, -30, VW + 60, VH + 60, col_a(0x3E6EA8FFu, 0.16f));
+    /* far layer: planets, moons and big swirly clouds */
+    {
+        const float P = 2600.0f, f = 0.22f;
+        float s = g->scroll * f, oyf = oy * 1.4f;
+        for (int i = 0; i < 6; i++) {
+            uint32_t h = 0xCA7u + (uint32_t)i * 4099u;
+            float x = posmod(hf(h) * P - s, P) - 300.0f;
+            if (x < -300 || x > VW + 300) continue;
+            float y = 90.0f + hf(h + 1) * 220.0f + oyf;
+            Poly p;
+            switch (i % 3) {
+            case 0: {                                        /* ringed planet: back of ring, ball, stripes, front of ring */
+                float r = 58.0f + hf(h + 2) * 20.0f;
+                uint32_t pc = (i & 1) ? CP_ORANGE : CP_PURPLE, rc = (i & 1) ? CP_RED : CP_PINK;
+                cp_circle(&p, x, y, r, h);
+                cp_jit(&p, h);
+                cutout(&p, pc, 5.0f, h);
+                for (int k = 0; k < 2; k++) {                /* glued-on stripes */
+                    poly_clear(&p);
+                    float sy0 = y - r * 0.45f + (float)k * r * 0.55f;
+                    for (int j = 0; j <= 10; j++) { float t = (float)j / 10.0f, xx = x - r * 0.95f + t * r * 1.9f; poly_add(&p, xx, sy0 + sinf(t * 6.0f + (float)i) * 3.0f); }
+                    for (int j = 10; j >= 0; j--) { float t = (float)j / 10.0f, xx = x - r * 0.95f + t * r * 1.9f; poly_add(&p, xx, sy0 + 13.0f + sinf(t * 5.0f + (float)i) * 3.0f); }
+                    float rr = r * 0.93f;                    /* keep it inside the ball */
+                    for (int j = 0; j < p.n; j++) { float dx = p.x[j] - x, dy = p.y[j] - y, d = sqrtf(dx * dx + dy * dy); if (d > rr) { p.x[j] = x + dx / d * rr; p.y[j] = y + dy / d * rr; } }
+                    cp_jit(&p, h + 9u);
+                    cutout(&p, col_mix(pc, WHITE, 0.35f), 2.0f, h + 7u + (uint32_t)k);
+                }
+                poly_clear(&p);                              /* the ring: a flat band in front */
+                for (int j = 0; j <= 16; j++) { float a = PI_F * (float)j / 16.0f; poly_add(&p, x + cosf(a) * r * 1.75f, y + 6.0f + sinf(a) * r * 0.42f); }
+                for (int j = 16; j >= 0; j--) { float a = PI_F * (float)j / 16.0f; poly_add(&p, x + cosf(a) * r * 1.3f, y + 6.0f + sinf(a) * r * 0.24f); }
+                cp_jit(&p, h + 11u);
+                cutout(&p, rc, 4.0f, h + 12u);
+                break;
+            }
+            case 1: {                                        /* crescent moon: a yellow circle with a sky-coloured one glued over it */
+                float r = 46.0f + hf(h + 2) * 14.0f;
+                cp_circle(&p, x, y, r, h); cp_jit(&p, h);
+                cutout(&p, CP_YELLOW, 5.0f, h);
+                cp_circle(&p, x + r * 0.45f, y - r * 0.2f, r * 0.85f, h + 3u); cp_jit(&p, h + 3u);
+                cutout(&p, col_mix(CP_SKY, WHITE, 0.08f), 3.0f, h + 4u);
+                break;
+            }
+            default:
+                cp_cloud(x, y + 40.0f, 230.0f, col_mix(CP_SKY, WHITE, 0.45f), h);
+                break;
+            }
+        }
+    }
+    /* middle layer: paper stars dangling on strings, and white clouds */
+    {
+        const float P = 1700.0f, f = 0.4f;
+        float s = g->scroll * f, oym = oy * 2.0f;
+        for (int i = 0; i < 9; i++) {
+            uint32_t h = 0x57A2u + (uint32_t)i * 6007u;
+            float x = posmod(hf(h) * P - s, P) - 150.0f;
+            if (x < -150 || x > VW + 150) continue;
+            Poly p;
+            if (i % 3 == 2) {
+                cp_cloud(x, 120.0f + hf(h + 1) * 230.0f + oym, 120.0f + hf(h + 2) * 60.0f, CP_WHITE, h);
+                continue;
+            }
+            float len = 50.0f + hf(h + 1) * 120.0f, r = 17.0f + hf(h + 2) * 9.0f;
+            float sway = sinf(boil_t * 1.3f + (float)i) * 0.12f;
+            float sx2 = x + sinf(sway) * len, sy2 = -10.0f + cosf(sway) * len + oym * 0.3f;
+            gfx_tex(TEX_SOLID);
+            gfx_line(x, -12.0f, sx2, sy2 - r * 0.8f, 1.4f, 0xEDE6D2FFu, 0xEDE6D2FFu);   /* the string */
+            static const uint32_t SC[4] = {CP_YELLOW, CP_PINK, CP_ORANGE, CP_WHITE};
+            cp_star(&p, sx2, sy2, r, sway);
+            cp_jit(&p, h);
+            cutout(&p, SC[i % 4], 3.5f, h);
+        }
+    }
+    /* near layer: rolling hills cut from two greens */
+    {
+        const float f = 0.5f;
+        float s = g->scroll * f;
+        for (int layer = 0; layer < 2; layer++) {
+            Poly p; poly_clear(&p);
+            float base = (layer ? 446.0f : 426.0f) + oy * 2.5f, amp = layer ? 10.0f : 18.0f;
+            float wl = layer ? 210.0f : 330.0f, sh = s * (layer ? 1.25f : 1.0f);
+            for (int j = 0; j <= 24; j++) {
+                float x = -40.0f + (VW + 80.0f) * (float)j / 24.0f, w = (x + sh) / wl;
+                poly_add(&p, x, base - amp * (sinf(w * TAU) * 0.7f + sinf(w * TAU * 2.3f + 1.0f) * 0.3f));
+            }
+            poly_add(&p, VW + 40.0f, VH + 40.0f);
+            poly_add(&p, -40.0f, VH + 40.0f);
+            cp_jit(&p, 0x4111u + (uint32_t)layer);
+            cutout(&p, layer ? CP_GREEN_D : CP_GREEN, 4.0f, 0x4111u + (uint32_t)layer);
+        }
+    }
+    /* rubbed-out patches: the eraser lifts the dye and scuffs the fibres */
+    for (int i = 0; i < 48; i++) {
+        const float *m = g->erase_mark[i];
+        if (m[3] <= 0) continue;
+        float sx = sxof(g, m[0]);
+        if (sx < -60 || sx > VW + 60) continue;
+        float a = clampf(m[3] / 1.5f, 0, 1);
+        Poly p;
+        poly_blob(&p, sx, m[1], m[2] * 1.1f, m[2] * 0.9f, 14, 0.15f, (uint32_t)i * 31u);
+        gfx_tex(TEX_SOLID);
+        paper_fill(&p, col_a(0xE8EEF4FFu, 0.32f * a));
+        gfx_tex(TEX_CRAYON);
+        gfx_uv(sx, m[1], 90.0f, 0.3f * (float)i, 0);
+        gfx_rect(sx - m[2], m[1] - m[2] * 0.9f, m[2] * 2.0f, m[2] * 1.8f, col_a(0xF6A8C4FFu, 0.12f * a));
+    }
+}
+
+/* crayon doodles drawn onto the collage - the pencil's eraser rubs these out */
+static void draw_cp_doodles(const Game *g)
+{
+    static const uint32_t DC[6] = {0xFFE04AFFu, 0xFFFFFFFFu, 0xFF6FA8FFu, 0xFF9A2AFFu, 0x9CF06AFFu, 0xC898FFFFu};
+    for (int i = 0; i < CP_DOODLES; i++) {
+        if (g->doodle_gone[i]) continue;
+        float x, y, r;
+        cp_doodle(g, i, &x, &y, &r);
+        if (x < -30 || x > VW + 30) continue;
+        uint32_t h = 0xD00Du + (uint32_t)i * 7919u, seed = h + (uint32_t)boil * 131u;
+        uint32_t c = DC[i % 6];
+        Poly p;
+        switch ((ihash(h + 5u) >> 9) % 5) {
+        case 0: cp_star(&p, x, y, r, 0.2f * (float)(i % 3)); gfx_uv(x, y, 64, hf(seed), 0); crayon_fill(&p, c); pen_poly(&p, 1, 1.6f, col_a(c, 0.9f), seed, 0.8f); break;
+        case 1: {                                             /* heart */
+            poly_clear(&p);
+            for (int k = 0; k < 20; k++) { float t = TAU * (float)k / 20.0f, hx = 16.0f * powf(sinf(t), 3.0f), hy = -(13.0f * cosf(t) - 5.0f * cosf(2 * t) - 2.0f * cosf(3 * t) - cosf(4 * t)); poly_add(&p, x + hx * r / 17.0f, y + hy * r / 17.0f); }
+            gfx_uv(x, y, 64, hf(seed), 0); crayon_fill(&p, c); pen_poly(&p, 1, 1.6f, col_a(c, 0.9f), seed, 0.8f);
+            break;
+        }
+        case 2: {                                             /* spiral */
+            poly_clear(&p);
+            for (int k = 0; k < 26; k++) { float a = (float)k * 0.55f, rr = r * (float)k / 26.0f; poly_add(&p, x + cosf(a) * rr, y + sinf(a) * rr); }
+            pen_poly(&p, 0, 2.4f, c, seed, 0.6f);
+            break;
+        }
+        case 3: {                                             /* little sun */
+            poly_blob(&p, x, y, r * 0.5f, r * 0.5f, 12, 0.08f, seed);
+            gfx_uv(x, y, 64, hf(seed), 0); crayon_fill(&p, c);
+            for (int k = 0; k < 8; k++) { float a = TAU * (float)k / 8.0f; pen_line(x + cosf(a) * r * 0.65f, y + sinf(a) * r * 0.65f, x + cosf(a) * r, y + sinf(a) * r, 2.0f, c, seed + (uint32_t)k, 0.3f); }
+            break;
+        }
+        default:                                              /* squiggle */
+            poly_clear(&p);
+            for (int k = 0; k < 12; k++) poly_add(&p, x - r + 2.0f * r * (float)k / 11.0f, y + ((k & 1) ? -r * 0.4f : r * 0.4f));
+            pen_poly(&p, 0, 2.4f, c, seed, 0.9f);
+            break;
+        }
+    }
+}
+
 static void draw_background(const Game *g, float shx, float shy)
 {
+    if (g->L->paper == 2) {
+        float jx = (hf((uint32_t)boil * 3u + 1u) - 0.5f) * 1.0f, jy = (hf((uint32_t)boil * 5u + 2u) - 0.5f) * 0.8f;
+        gfx_view(shx + jx, shy + jy, 1.0f);
+        draw_cpaper(g);
+        draw_cp_doodles(g);
+        return;
+    }
     float jx = (hf((uint32_t)boil * 3u + 1u) - 0.5f) * 1.6f, jy = (hf((uint32_t)boil * 5u + 2u) - 0.5f) * 1.2f;
     gfx_view(shx + jx, shy + jy, 1.0f);
     draw_paper(g);
@@ -753,11 +980,186 @@ static void draw_boss2(const Game *g, const Enemy *e, float sx, float sy, float 
     (void)seed;
 }
 
+/* scissors: open wide when they're about to snap */
+static void draw_snip(const Game *g, const Enemy *e, Xf *t, uint32_t seed)
+{
+    float open;
+    if (e->mode == 1) open = 0.25f + 0.55f * clampf(e->mode_t / 0.3f, 0, 1) + sinf(g->time * 50.0f) * 0.04f;
+    else if (e->mode == 2) open = fmaxf(0.8f - e->mode_t * 9.0f, 0.0f);
+    else open = 0.22f + 0.16f * sinf(e->t * 7.0f);
+    int flip = t->c < 0;                                     /* keep the handles the right way up */
+    t->sx *= 1.35f; t->sy *= 1.35f;
+    if (flip) t->sy = -t->sy;
+    for (int k = 0; k < 2; k++) {
+        float side = k ? 1.0f : -1.0f, a = side * open * 0.5f, c = cosf(a), s = sinf(a);
+        /* blade: from the pivot forwards, a long thin triangle */
+        float bx[5] = {-3, 20, 36, 30, -3}, by[5] = {-6.0f * side, -3.5f * side, 0.5f * side, 4.0f * side, 4.5f * side};
+        Poly b; poly_clear(&b);
+        for (int j = 0; j < 5; j++) xadd(&b, t, bx[j] * c - by[j] * s, bx[j] * s + by[j] * c);
+        gfx_uv(t->x, t->y, 64, 0, 0);
+        crayon_fill(&b, 0xEEF0F6FFu);
+        pen_poly(&b, 1, 2.0f, INK, seed + (uint32_t)k, 0.3f);
+        float s0x, s0y, s1x, s1y;                            /* shine along the blade */
+        xpt(t, 4 * c - (-1.0f * side) * s, 4 * s + (-1.0f * side) * c, &s0x, &s0y);
+        xpt(t, 24 * c - (0.5f * side) * s, 24 * s + (0.5f * side) * c, &s1x, &s1y);
+        pen_line(s0x, s0y, s1x, s1y, 1.4f, 0x9AA0B8FFu, seed + 11u + (uint32_t)k, 0.2f);
+        /* handle loop on the other side of the pivot */
+        float hx = -15.0f, hy = side * 8.0f, lx = hx * c - hy * s, ly = hx * s + hy * c;
+        Poly hl; poly_clear(&hl);
+        for (int j = 0; j < 14; j++) { float aa = TAU * (float)j / 14.0f; xadd(&hl, t, lx + cosf(aa) * 9.0f, ly + sinf(aa) * 7.0f); }
+        gfx_uv(t->x, t->y, 64, 0.3f, 0);
+        crayon_fill(&hl, e->mode == 2 ? C_RED : 0xE8484CFFu);
+        pen_poly(&hl, 1, 1.8f, INK, seed + 3u + (uint32_t)k, 0.4f);
+        Xf u = *t; u.c = 1; u.s = 0; u.sx = fabsf(t->sx); u.sy = fabsf(t->sy);
+        float ex, ey; xpt(t, lx, ly, &ex, &ey);
+        Xf eu = xf(ex, ey, 0, u.sx, u.sy);
+        eye(&eu, 0, 0, 4.2f, sxof(g, g->px), g->py, seed + 6u + (uint32_t)k);
+    }
+    float px, py; xpt(t, 0, 0, &px, &py);
+    blob(px, py, 2.6f, 2.6f, C_YELLOW, INK, 1.2f, seed + 9u, 0);          /* pivot screw */
+    if (e->mode == 1 && ((int)(g->time * 14.0f) & 1)) gfx_text_c("!", px, py - 40.0f, 28.0f, C_RED);
+    if (e->flash > 0.3f) blob(px, py, 24, 14, col_a(WHITE, e->flash * 0.7f), 0, 0, seed, 0.1f);
+}
+
+/* folded paper plane */
+static void draw_plane(const Game *g, const Enemy *e, Xf *t, uint32_t seed)
+{
+    t->sx *= 1.25f; t->sy *= 1.25f;
+    if (t->c < 0) t->sy = -t->sy;                            /* upright whichever way it flies */
+    static const float TOP[3][2] = {{28, 0}, {-20, -15}, {-12, 1}};
+    static const float BOT[4][2] = {{28, 0}, {-12, 1}, {-20, 11}, {-8, 4}};
+    static const float KEEL[3][2] = {{24, 1}, {-12, 1}, {-8, 7}};
+    shape(t, KEEL, 3, 0xC8CCD8FFu, INK, 1.4f, seed + 2);
+    shape(t, BOT, 4, 0xE4E6EEFFu, INK, 1.8f, seed + 1);
+    shape(t, TOP, 3, WHITE, INK, 2.0f, seed);
+    xline(t, 18, -3, -14, -10, 2.2f, C_BLUE, seed + 3);                     /* the stripe */
+    Xf u = *t;
+    float ex, ey; xpt(&u, 6, -4, &ex, &ey);
+    Xf eu = xf(ex, ey, 0, 1, 1);
+    eye(&eu, 0, 0, 3.6f, sxof(g, g->px), g->py, seed + 4);
+    if (e->flash > 0.3f) blob(t->x, t->y, 22, 12, col_a(WHITE, e->flash * 0.7f), 0, 0, seed, 0.1f);
+}
+
+/* pinwheel on a stick: spins up and sprays a spiral of bullets */
+static void draw_pinwheel(const Game *g, const Enemy *e, float sx, float sy, float sc, uint32_t seed)
+{
+    gfx_tex(TEX_SOLID);
+    pen_line(sx, sy, sx + 2.0f * sc, sy + 40.0f * sc, 3.2f * sc, 0x9A6A3AFFu, seed + 1, 0.3f);
+    static const uint32_t PC[4] = {0xF0483CFFu, 0xFFD23AFFu, 0x3D8CF0FFu, 0x8CD84AFFu};
+    float R = 30.0f * sc;
+    for (int k = 0; k < 4; k++) {
+        float a = e->ang + PI_F * 0.5f * (float)k;
+        float c = cosf(a), s = sinf(a), c2 = cosf(a + 0.95f), s2 = sinf(a + 0.95f);
+        Poly p; poly_clear(&p);
+        poly_add(&p, sx + c * 3.0f * sc, sy + s * 3.0f * sc);
+        poly_add(&p, sx + c * R, sy + s * R);
+        poly_add(&p, sx + c2 * R * 0.95f, sy + s2 * R * 0.95f);
+        poly_add(&p, sx + c2 * R * 0.45f, sy + s2 * R * 0.45f);
+        gfx_uv(sx, sy, 64, 0.2f * (float)k, 0);
+        crayon_fill(&p, PC[k]);
+        pen_poly(&p, 1, 1.8f, INK, seed + 2u + (uint32_t)k, 0.3f);
+    }
+    blob(sx, sy, 8.0f * sc, 8.0f * sc, WHITE, INK, 1.6f, seed + 8, 0.05f);
+    Xf t = xf(sx, sy, 0, sc, sc);
+    eye(&t, -3.0f, -1.0f, 2.6f, sxof(g, g->px), g->py, seed + 9);
+    eye(&t, 3.0f, -1.0f, 2.6f, sxof(g, g->px), g->py, seed + 10);
+    if (e->idx) {                                            /* whoosh lines */
+        for (int k = 0; k < 3; k++) {
+            float a = -e->ang * 0.3f + TAU * (float)k / 3.0f;
+            Poly w; poly_clear(&w);
+            for (int j = 0; j < 6; j++) { float aa = a + 0.12f * (float)j; poly_add(&w, sx + cosf(aa) * R * 1.3f, sy + sinf(aa) * R * 1.3f); }
+            pen_poly(&w, 0, 1.4f, col_a(C_GREY, 0.7f), seed + 20u + (uint32_t)k, 0.2f);
+        }
+    }
+    if (e->flash > 0.3f) blob(sx, sy, R, R, col_a(WHITE, e->flash * 0.6f), 0, 0, seed, 0.1f);
+}
+
+/* the Pencil: the drawing, coloured in, turned to point wherever it likes, with googly eyes stuck on */
+static void draw_boss3(const Game *g, const Enemy *e, float sx, float sy, float sc, uint32_t seed)
+{
+    int mad = e->hp < e->maxhp * 0.5f;
+    float c = cosf(e->ang), s = sinf(e->ang);
+    float tx, ty, ex, ey;
+    pencil_ends(e, &tx, &ty, &ex, &ey);
+    float esx = sx + c * BOSS3_LEN * 0.5f * sc, esy = sy + s * BOSS3_LEN * 0.5f * sc;
+    if (e->mode == PM_TURN) {                                /* where the eraser is about to go: pink while aiming, red once locked */
+        int locked = e->lash_t > 0;
+        float dx = (locked ? sxof(g, e->ax) : sxof(g, g->px)) - esx, dy = (locked ? e->ay : g->py) - esy, l = sqrtf(dx * dx + dy * dy) + 0.01f;
+        float len = locked ? l : l + 170.0f;
+        int on = (int)(g->time * 16.0f) & 1;
+        for (float d = 20.0f; d < len; d += 22.0f) {
+            float q = d / len, r = locked ? 5.5f : 4.0f;
+            blob(esx + dx / l * d, esy + dy / l * d, r, r, col_a(locked ? (on ? C_RED : 0xFF8080FFu) : CP_PINK, 0.9f - q * 0.4f), 0, 0, seed + (uint32_t)d, 0.1f);
+        }
+        if (locked) {                                        /* a big X where it'll end */
+            float xx = esx + dx, yy = esy + dy;
+            pen_line(xx - 12, yy - 12, xx + 12, yy + 12, 4.0f, C_RED, seed + 5, 0.3f);
+            pen_line(xx + 12, yy - 12, xx - 12, yy + 12, 4.0f, C_RED, seed + 6, 0.3f);
+        }
+    }
+    /* the drawing: local x along the pencil (towards the eraser), y across */
+    float W = BOSS3_PIC_W * sc, H = BOSS3_PIC_H * sc;
+    float mu = (B3_TIP_U + B3_END_U) * 0.5f;
+    float u0 = -mu * W, u1 = (1.0f - mu) * W;             /* the drawing has its tip on the left: local +x is the eraser end */
+    float jit = e->flash > 0.3f ? 2.0f : 0.0f;
+    if (e->mode == PM_TURN) jit += 2.0f;
+    float jx = jit * sinf(g->time * 70.0f), jy = jit * cosf(g->time * 53.0f);
+    float flip = c < 0 ? -1.0f : 1.0f;                       /* never upside down: mirror across its length instead */
+    float LX[4] = {u0, u1, u1, u0}, LY[4] = {-B3_TIP_V * H * flip, -B3_TIP_V * H * flip, (1.0f - B3_TIP_V) * H * flip, (1.0f - B3_TIP_V) * H * flip};
+    float X[4], Y[4];
+    for (int k = 0; k < 4; k++) { X[k] = sx + jx + LX[k] * c - LY[k] * s; Y[k] = sy + jy + LX[k] * s + LY[k] * c; }
+    /* shadow on the paper */
+    {
+        float SX[4], SY[4];
+        for (int k = 0; k < 4; k++) { SX[k] = X[k] + 6.0f; SY[k] = Y[k] + 8.0f; }
+        gfx_image(TEX_BOSS3, SX, SY, 0x10183048u);
+    }
+    uint32_t tint = mad ? 0xFFD8D0FFu : WHITE;
+    if (e->flash > 0.3f) tint = 0xFFC0C0FFu;
+    gfx_image(TEX_BOSS3, X, Y, tint);
+    /* googly eyes on the yellow body, always upright */
+    float lookx = sxof(g, g->px), looky = g->py;
+    for (int k = 0; k < 2; k++) {
+        float along = -24.0f + 30.0f * (float)k;
+        float exx = sx + jx + c * along * sc, eyy = sy + jy + s * along * sc - 2.0f;
+        Xf t = xf(exx, eyy, 0, sc, sc);
+        float r = mad ? 12.0f : 13.5f;
+        eye(&t, 0, 0, r, lookx, looky, seed + 30u + (uint32_t)k);
+        if (mad) {                                           /* cross eyebrows */
+            float side = k ? 1.0f : -1.0f;
+            pen_line(exx - 12.0f * sc, eyy - (side > 0 ? 18.0f : 12.0f) * sc, exx + 12.0f * sc, eyy - (side > 0 ? 12.0f : 18.0f) * sc, 3.2f, INK, seed + 40u + (uint32_t)k, 0.2f);
+        }
+    }
+    if (e->mode == PM_SWEEP) {                               /* rubbing furiously */
+        static const char *RUB[3] = {"rub rub!", "scrub!", "rub-a-dub!"};
+        gfx_text_fancy(RUB[(int)(e->t * 2.0f) % 3], esx, fmaxf(esy - 66.0f, 96.0f), 26.0f, 0xD04880FFu, 0, 0, g->time, 3.0f);
+    }
+    (void)tx; (void)ty; (void)ex; (void)ey;
+}
+
+/* graphite left behind by the pencil's scribbles (it hurts to touch while it's fresh) */
+static void draw_lead(const Game *g)
+{
+    for (int i = 0; i < 128; i++) {
+        const float *a = g->lead[i], *b = g->lead[(i + 1) % 128];
+        if (a[2] <= 0) continue;
+        float sx = sxof(g, a[0]);
+        if (sx < -40 || sx > VW + 40) continue;
+        float al = clampf(a[2] / 0.6f, 0, 1);
+        uint32_t c = col_a(0x4A4A58FFu, 0.9f * al);
+        if (b[2] > 0 && b[3] == a[3] && (i + 1) % 128 != g->lead_next) {
+            float bx = sxof(g, b[0]);
+            if (fabsf(bx - sx) < 80.0f) { pen_line(sx, a[1], bx, b[1], 5.0f, c, (uint32_t)i * 7u + (uint32_t)boil, 0.6f); continue; }
+        }
+        blob(sx, a[1], 2.6f, 2.6f, c, 0, 0, (uint32_t)i, 0.1f);
+    }
+}
+
 static void draw_warp(const Game *g, const Enemy *e, float sx, float sy)
 {
     if (e->warp_t < 0) return;
     float p = e->warp_t / 0.7f;
-    float big = IS_BOSS(e->type) ? 3.5f : (e->type == EN_SERPENT || e->type == EN_SPORE || e->type == EN_UFO || e->type == EN_BLOB ? 1.5f : 1.0f);
+    float big = IS_BOSS(e->type) ? 3.5f : (e->type == EN_SERPENT || e->type == EN_SPORE || e->type == EN_UFO || e->type == EN_BLOB || e->type == EN_PINWHEEL ? 1.5f : 1.0f);
     for (int k = 0; k < 2; k++) {                                              /* orange diamonds closing in */
         float q = clampf(p * 1.25f - 0.2f * (float)k, 0, 1);
         if (q <= 0 || q >= 1) continue;
@@ -770,13 +1172,14 @@ static void draw_warp(const Game *g, const Enemy *e, float sx, float sy)
 
 static void draw_enemies(const Game *g)
 {
+    draw_lead(g);
     for (int pass = 0; pass < 2; pass++) {
         for (int i = MAX_EN - 1; i >= 0; i--) {
             const Enemy *e = &g->en[i];
             if (!e->alive) continue;
             if ((pass == 0) != (e->type == EN_SEG)) continue;
             float sx = sxof(g, e->x), sy = e->y;
-            if (!on_screen(sx, sy, e->type == EN_BOSS2 ? 320.0f : (e->type == EN_BOSS ? 160.0f : 60.0f))) continue;
+            if (!on_screen(sx, sy, e->type == EN_BOSS3 ? 240.0f : e->type == EN_BOSS2 ? 320.0f : (e->type == EN_BOSS ? 160.0f : 60.0f))) continue;
             if (e->warp) {
                 draw_warp(g, e, sx, sy);
                 if (e->warp_t / 0.7f < 0.6f) continue;
@@ -800,6 +1203,10 @@ static void draw_enemies(const Game *g)
             case EN_BOMB:    draw_bomb(g, e, &t, seed); break;
             case EN_BLOB: case EN_BLOBLET: draw_blob(g, e, sx, sy, sc, seed); break;
             case EN_BOSS2:   draw_boss2(g, e, sx, sy, sc, seed); break;
+            case EN_SNIP:    draw_snip(g, e, &t, seed); break;
+            case EN_PLANE:   draw_plane(g, e, &t, seed); break;
+            case EN_PINWHEEL: draw_pinwheel(g, e, sx, sy, sc, seed); break;
+            case EN_BOSS3:   draw_boss3(g, e, sx, sy, sc, seed); break;
             default: break;
             }
         }

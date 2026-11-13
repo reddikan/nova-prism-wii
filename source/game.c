@@ -21,6 +21,10 @@ const EnemyStats ESTAT[EN_TYPES] = {
     /* BLOB    */ {8,   20,   100,   0.3f, 2,  0xA8EE6AFFu, 0x7AD84AFFu, 0x4FA830FFu, 0xFFFFFFFFu, "BLOB"},
     /* BLOBLET */ {2,   11,   30,    0.1f, 1,  0xA8EE6AFFu, 0x7AD84AFFu, 0x4FA830FFu, 0xFFFFFFFFu, "BLOBLET"},
     /* BOSS2   */ {900, 80,   15000, 3.0f, 50, 0xFAC296FFu, 0xF0A070FFu, 0xC07050FFu, 0xA066F0FFu, "THE BIG HEAD"},
+    /* SNIP    */ {7,   17,   140,   0.3f, 3,  0xD8DCE8FFu, 0xA8AEC0FFu, 0x707890FFu, 0xF0483CFFu, "SCISSORS"},
+    /* PLANE   */ {3,   15,   90,    0.2f, 2,  0xFFFFFFFFu, 0xE6E8F2FFu, 0xB0B4C8FFu, 0x3D8CF0FFu, "PAPER PLANE"},
+    /* PINWHEEL*/ {16,  22,   220,   0.5f, 5,  0xFF9A2AFFu, 0x3D8CF0FFu, 0x5DB03AFFu, 0xFF6FA8FFu, "PINWHEEL"},
+    /* BOSS3   */ {1150, 30,  16000, 3.0f, 60, 0xFFD23AFFu, 0xF0B020FFu, 0xC08010FFu, 0xFF8AB0FFu, "THE PENCIL"},
 };
 
 enum { P_SPARK, P_GLOW, P_DEBRIS, P_SMOKE, P_CONF, P_STAR };
@@ -311,6 +315,28 @@ static void spawn_group(Game *g, const SpawnGroup *sg)
             if (e >= 0 && sg->type == EN_BOMB) g->en[e].fuse = frange(g, 5.5f, 7.0f);
             break;
         }
+        case EN_SNIP: case EN_PINWHEEL: {
+            float x = ax + frange(g, -220, 220), l2, h2;
+            corridor(g, x, 70.0f, &l2, &h2);
+            int e = spawn_enemy(g, sg->type, x, frange(g, l2, h2), d * 3.0f);
+            if (e >= 0) g->en[e].cd = frange(g, 1.0f, 2.0f);
+            break;
+        }
+        case EN_PLANE: {                                    /* squadrons in a V, flying across */
+            int e = spawn_enemy(g, EN_PLANE, ax + dir * 34.0f * (float)(k / 2 + 1) * 1.2f, clampf(ay + ((k & 1) ? 1.0f : -1.0f) * 30.0f * (float)((k + 1) / 2), 70.0f, 410.0f), d * 0.5f);
+            if (e >= 0) { g->en[e].vx = -dir * 380.0f; g->en[e].cd = 0.8f + 0.2f * (float)k; }
+            break;
+        }
+        case EN_BOSS3: {
+            int b = spawn_enemy(g, EN_BOSS3, g->px + (float)g->face * 450.0f, 200.0f, 1.9f);
+            if (b >= 0) {
+                g->boss = b;
+                g->en[b].cd = 2.4f;
+                g->en[b].ang = PI_F;
+                g->boss_shown_hp = 0;
+            }
+            break;
+        }
         case EN_BOSS2: {
             int b = spawn_enemy(g, EN_BOSS2, g->px + (float)g->face * 470.0f, 190.0f, 1.9f);
             if (b >= 0) {
@@ -403,6 +429,22 @@ static void announce_combo(Game *g)
 
 static void kill_enemy(Game *g, int i, int scored);
 
+/* does a point (plus some slack) touch this enemy? The pencil boss is a long capsule, everything else a circle */
+static int hits_enemy(const Game *g, const Enemy *e, float x, float y, float extra)
+{
+    float r = e->r + extra;
+    if (e->type == EN_BOSS3) {
+        float tx, ty, ex, ey;
+        pencil_ends(e, &tx, &ty, &ex, &ey);
+        float ax = wd(g, tx - x), ay = ty - y, bx = wd(g, ex - x), by = ey - y;
+        float dx = bx - ax, dy = by - ay, t = clampf(-(ax * dx + ay * dy) / (dx * dx + dy * dy + 0.001f), 0, 1);
+        float px = ax + dx * t, py = ay + dy * t;
+        return px * px + py * py < r * r;
+    }
+    float dx = wd(g, e->x - x), dy = e->y - y;
+    return dx * dx + dy * dy < r * r;
+}
+
 static void boss_start_death(Game *g, int i)
 {
     Enemy *e = &g->en[i];
@@ -438,6 +480,9 @@ static void kill_enemy(Game *g, int i, int scored)
     case EN_BOMB:    size = 1.3f;  shield_pct = 4;  sfxp(g, SFX_EXPL_S, 100); break;
     case EN_BLOB:    size = 1.6f;  shield_pct = 8;  sfxp(g, SFX_EXPL_M, 150); break;
     case EN_BLOBLET: size = 0.8f;  sfxp(g, SFX_EXPL_S, 170 + (int)(rnd(g) % 20)); break;
+    case EN_SNIP:    size = 1.5f;  shield_pct = 6;  sfx(g, SFX_EXPL_M); break;
+    case EN_PLANE:   size = 1.1f;  shield_pct = 3;  sfxp(g, SFX_EXPL_S, 130); break;
+    case EN_PINWHEEL: size = 2.0f; shield_pct = 20; sfx(g, SFX_EXPL_M); g->hitstop = 0.05f; break;
     default: break;
     }
     explode(g, e->x, e->y, size, s->c_light, s->c_accent);
@@ -488,6 +533,7 @@ static void hurt_enemy(Game *g, int i, float dmg, float kx, float ky)
     e->flash = IS_BOSS(e->type) ? 0.45f : 0.8f;
     switch (e->type) {
     case EN_SHARD: case EN_ZIP: case EN_SPORE: case EN_UFO: case EN_BOMB: case EN_BLOB: case EN_BLOBLET:
+    case EN_SNIP: case EN_PLANE: case EN_PINWHEEL:
         e->vx += kx; e->vy += ky; break;
     default: break;
     }
@@ -661,6 +707,7 @@ static void missile_explode(Game *g, Missile *m)
         if (!e->alive || e->warp) continue;
         float dx = wd(g, e->x - m->x), dy = e->y - m->y;
         float rr = 40.0f + e->r;
+        if (e->type == EN_BOSS3) { if (hits_enemy(g, e, m->x, m->y, 40.0f)) hurt_enemy(g, i, 6.0f, 0, 0); continue; }
         if (dx * dx + dy * dy < rr * rr) hurt_enemy(g, i, 6.0f, dx * 2.0f, dy * 2.0f);
     }
 }
@@ -676,7 +723,13 @@ static void lance_damage(Game *g)
     for (int i = 0; i < MAX_EN; i++) {
         Enemy *e = &g->en[i];
         if (!e->alive || e->warp) continue;
-        if (lance_hits(g, e->x, e->y, e->r)) {
+        int lh = lance_hits(g, e->x, e->y, e->r);
+        if (!lh && e->type == EN_BOSS3) {
+            float tx, ty, ex, ey;
+            pencil_ends(e, &tx, &ty, &ex, &ey);
+            lh = lance_hits(g, tx, ty, e->r) || lance_hits(g, ex, ey, e->r);
+        }
+        if (lh) {
             hit_sparks(g, e->x, e->y, g->lance_dir > 0 ? 0.0f : PI_F, COL_Y, 6);
             hurt_enemy(g, i, 9.0f, (float)g->lance_dir * 120.0f, 0);
         }
@@ -839,8 +892,8 @@ static void update_player(Game *g, const Input *in, uint32_t pressed, float dt)
         for (int i = 0; i < MAX_EN; i++) {
             Enemy *e = &g->en[i];
             if (!e->alive || e->warp) continue;
-            float dx = wd(g, e->x - g->px), dy = e->y - g->py, rr = BLADE_R + e->r;
-            if (dx * dx + dy * dy < rr * rr && e->hitcd <= 0) {
+            float dx = wd(g, e->x - g->px), dy = e->y - g->py;
+            if (hits_enemy(g, e, g->px, g->py, BLADE_R) && e->hitcd <= 0) {
                 e->hitcd = 0.1f;
                 float d = sqrtf(dx * dx + dy * dy) + 0.01f;
                 hit_sparks(g, e->x, e->y, atan2f(dy, dx), COL_B, 5);
@@ -1106,6 +1159,239 @@ static void update_boss2(Game *g, int i, float dt)
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* the Pencil (level 3 boss) and its eraser                             */
+/* ------------------------------------------------------------------ */
+static void erase_crumbs(Game *g, float x, float y, int n)
+{
+    for (int k = 0; k < n; k++) {
+        float a = frange(g, 0, TAU), s = frange(g, 60, 200);
+        Part *p = newpart(g, P_DEBRIS, x, y, cosf(a) * s, sinf(a) * s - 60.0f, frange(g, 0.5f, 0.9f), frange(g, 2.0f, 3.5f), (k & 1) ? 0xFF8AB0FFu : 0xF6B8CCFFu);
+        p->rot = frange(g, 0, TAU); p->vr = frange(g, -10, 10); p->drag = 2.0f;
+    }
+}
+
+/* rub out everything hand-drawn in a circle (world x, y): you, the baddies, bullets, pickups, doodles */
+static void erase_at(Game *g, float x, float y, float r)
+{
+    Enemy *pencil = g->boss >= 0 ? &g->en[g->boss] : NULL;
+    if (g->alive && g->inv_t <= 0) {
+        float dx = wd(g, g->px - x), dy = g->py - y;
+        if (dx * dx + dy * dy < (r + SHIP_R) * (r + SHIP_R)) {
+            hurt_player(g);
+            popup(g, sxof(g, g->px), g->py - 40.0f, "you got erased!", 0x8A8A96FFu, 0);
+        }
+    }
+    for (int i = 0; i < MAX_EN; i++) {
+        Enemy *e = &g->en[i];
+        if (!e->alive || e->warp || IS_BOSS(e->type) || e == pencil) continue;
+        float dx = wd(g, e->x - x), dy = e->y - y, rr = r + e->r * 0.7f;
+        if (dx * dx + dy * dy > rr * rr) continue;
+        e->alive = 0;                                      /* rubbed out: no points, no crystals, no splitting */
+        erase_crumbs(g, e->x, e->y, 8);
+        if (rnd(g) % 3 == 0) popup(g, sxof(g, e->x), e->y - 20.0f, "erased!", 0x8A8A96FFu, 0);
+        sfxp(g, SFX_DEFLECT, 70);
+    }
+    for (int i = 0; i < MAX_EB; i++) {
+        EBullet *b = &g->eb[i];
+        if (!b->alive) continue;
+        float dx = wd(g, b->x - x), dy = b->y - y;
+        if (dx * dx + dy * dy < (r + 8.0f) * (r + 8.0f)) { b->alive = 0; erase_crumbs(g, b->x, b->y, 2); }
+    }
+    for (int i = 0; i < MAX_PB; i++) {
+        Bolt *b = &g->pb[i];
+        if (!b->alive) continue;
+        float dx = wd(g, b->x - x), dy = b->y - y;
+        if (dx * dx + dy * dy < (r + 8.0f) * (r + 8.0f)) b->alive = 0;
+    }
+    for (int i = 0; i < MAX_CRY; i++) {
+        Crystal *c = &g->cr[i];
+        if (!c->alive) continue;
+        float dx = wd(g, c->x - x), dy = c->y - y;
+        if (dx * dx + dy * dy < (r + 8.0f) * (r + 8.0f)) { c->alive = 0; erase_crumbs(g, c->x, c->y, 2); }
+    }
+    for (int i = 0; i < 128; i++) {
+        float *l = g->lead[i];
+        if (l[2] <= 0) continue;
+        float dx = wd(g, l[0] - x), dy = l[1] - y;
+        if (dx * dx + dy * dy < r * r) l[2] = 0;
+    }
+    if (g->L->paper == 2) {                                /* the crayon doodles on the page */
+        float sx = sxof(g, x);
+        for (int i = 0; i < CP_DOODLES; i++) {
+            if (g->doodle_gone[i]) continue;
+            float dx2, dy2, dr;
+            cp_doodle(g, i, &dx2, &dy2, &dr);
+            float ddx = dx2 - sx, ddy = dy2 - y;
+            if (ddx * ddx + ddy * ddy < (r + dr) * (r + dr)) {
+                g->doodle_gone[i] = 1;
+                erase_crumbs(g, wrapx(g, g->camx + dx2 - VW * 0.5f), dy2, 4);
+            }
+        }
+    }
+    /* a rubbed-out smudge on the paper */
+    float *m = g->erase_mark[g->erase_next];
+    g->erase_next = (g->erase_next + 1) % 48;
+    m[0] = x; m[1] = y; m[2] = r; m[3] = 5.0f;
+}
+
+static void lead_point(Game *g, float x, float y, int stroke)
+{
+    float *l = g->lead[g->lead_next];
+    g->lead_next = (g->lead_next + 1) % 128;
+    l[0] = x; l[1] = y; l[2] = 2.8f; l[3] = (float)stroke;
+}
+
+
+static void update_boss3(Game *g, int i, float dt)
+{
+    Enemy *e = &g->en[i];
+    if (g->boss_dying > 0) return;
+    int mad = e->hp < e->maxhp * 0.5f;
+    if (mad && e->idx == 0) {
+        e->idx = 1;
+        popup(g, VW * 0.5f, 160.0f, "ERASE EVERYTHING!", 0xF0483CFFu, 1);
+        sfx(g, SFX_BOSS);
+        shake(g, 12.0f);
+        e->cd = 0.6f;
+    }
+    float tx, ty, ex, ey;
+    pencil_ends(e, &tx, &ty, &ex, &ey);
+    float to_p = atan2f(g->py - e->y, wd(g, g->px - e->x));
+    e->mode_t += dt;
+    float turn_rate = 5.0f;
+
+    switch (e->mode) {
+    case PM_HOVER: {                                       /* hover beside you, pointing its tip at you */
+        float side = wd(g, g->px - e->x) > 0 ? -1.0f : 1.0f;
+        float hx = g->px + side * 340.0f, hy = 190.0f + sinf(e->t * 0.9f) * 50.0f;
+        e->vx = approach(e->vx, clampf(wd(g, hx - e->x) * 1.4f, -170.0f, 170.0f), dt * 2.0f);
+        e->vy = approach(e->vy, clampf((hy - e->y) * 1.6f, -140.0f, 140.0f), dt * 2.0f);
+        e->x = wrapx(g, e->x + e->vx * dt);
+        e->y += e->vy * dt;
+        float want = to_p + PI_F;                         /* eraser away, tip toward you */
+        float da = want - e->ang;
+        while (da > PI_F) da -= TAU;
+        while (da < -PI_F) da += TAU;
+        e->ang += clampf(da, -turn_rate * dt, turn_rate * dt);
+        e->cd -= dt;
+        if (e->cd > 0 || !g->alive) break;
+        enum { A_ERASE, A_SHOT, A_SCRIB, A_SKETCH };
+        static const int P1[] = {A_ERASE, A_SHOT, A_SCRIB, A_SHOT, A_ERASE, A_SKETCH};
+        static const int P2[] = {A_ERASE, A_SCRIB, A_SHOT, A_ERASE, A_SKETCH, A_SCRIB, A_SHOT};
+        int atk = mad ? P2[e->attack % 7] : P1[e->attack % 6];
+        e->attack++;
+        if (atk == A_ERASE) {
+            e->mode = PM_TURN; e->mode_t = 0; e->lash_t = 0; e->lash2 = mad ? 1 : 0;
+            sfxp(g, SFX_FLIP, 80);
+        } else if (atk == A_SHOT) {                       /* flicks pencil shavings / graphite at you */
+            int n = mad ? 3 : 2;
+            float a = atan2f(g->py - ty, wd(g, g->px - tx));
+            for (int k = -n; k <= n; k++) fire_ebullet(g, tx, ty, a + 0.17f * (float)k, 235.0f, 0);
+            sfx(g, SFX_ESHOT);
+            e->cd = mad ? 1.0f : 1.4f;
+        } else if (atk == A_SCRIB) {
+            e->mode = PM_SCRIBBLE; e->mode_t = 0; e->lash_k++;
+            float sa = atan2f(g->py - ty, wd(g, g->px - tx)) + ((e->attack & 2) ? 0.55f : -0.55f);   /* scribbles past you, not into you */
+            e->ax = cosf(sa); e->ay = sinf(sa);
+            sfxp(g, SFX_BLADE, 60);
+        } else {                                           /* sketches some friends into existence */
+            int n = 0;
+            for (int k = 0; k < MAX_EN; k++) n += g->en[k].alive && !IS_BOSS(g->en[k].type);
+            for (int k = 0; k < 3 && n < 12; k++, n++)
+                spawn_enemy(g, k == 2 ? EN_SNIP : EN_SHARD, e->x + frange(g, -140, 140), clampf(e->y + frange(g, -120, 160), 80.0f, 400.0f), 0.15f * (float)k);
+            popup(g, sxof(g, e->x), e->y - 70.0f, "*scribble scribble*", 0x22307CFFu, 0);
+            e->cd = 1.6f;
+        }
+        break;
+    }
+    case PM_TURN: {                                        /* flips round, eraser first, lines up on you... then locks on */
+        float tt = mad ? 0.75f : 0.95f, lock = tt - 0.4f;
+        if (e->mode_t < lock) {
+            float da = to_p - e->ang;
+            while (da > PI_F) da -= TAU;
+            while (da < -PI_F) da += TAU;
+            e->ang += clampf(da, -8.0f * dt, 8.0f * dt);
+            e->lash_t = 0;
+        } else if (e->lash_t == 0) {                      /* aim is now fixed: the dotted line turns red - move! */
+            e->lash_t = 1;
+            pencil_ends(e, &tx, &ty, &ex, &ey);
+            float dx = wd(g, g->px - ex), dy = g->py - ey, l = sqrtf(dx * dx + dy * dy) + 0.01f;
+            float over = 170.0f;
+            e->ax = wrapx(g, ex + dx + dx / l * over); e->ay = clampf(ey + dy + dy / l * over, 50.0f, 430.0f);
+            e->ang = atan2f(dy, dx);
+            sfxp(g, SFX_FLIP, 120);
+        }
+        e->x = wrapx(g, e->x + sinf(e->mode_t * 60.0f) * 1.5f);      /* shaking with excitement */
+        if (e->mode_t >= tt) {
+            pencil_ends(e, &tx, &ty, &ex, &ey);
+            e->mode = PM_SWEEP; e->mode_t = 0;
+            e->aux = ex; e->fuse = ey;                     /* where the rub starts */
+            sfx(g, SFX_BLADE);
+        }
+        break;
+    }
+    case PM_SWEEP: {                                       /* rubs a line right through you (and anything else) */
+        float T = mad ? 0.7f : 0.9f, u = clampf(e->mode_t / T, 0, 1);
+        float k = u * u * (3 - 2 * u);
+        float sx0 = e->aux, sy0 = e->fuse;
+        float dx = wd(g, e->ax - sx0), dy = e->ay - sy0, l = sqrtf(dx * dx + dy * dy) + 0.01f;
+        float scrub = sinf(e->mode_t * 42.0f) * 11.0f;
+        float rx = wrapx(g, sx0 + dx * k - dy / l * scrub), ry = sy0 + dy * k + dx / l * scrub;
+        e->ang = atan2f(dy, dx);
+        e->x = wrapx(g, rx - cosf(e->ang) * BOSS3_LEN * 0.5f);
+        e->y = ry - sinf(e->ang) * BOSS3_LEN * 0.5f;
+        if ((g->frame & 1) == 0) erase_at(g, rx, ry, ERASER_R);
+        erase_crumbs(g, rx, ry, 1);
+        sfxp(g, SFX_BLADE, 140 + (int)(rnd(g) % 30));
+        shake(g, 2.0f);
+        if (u >= 1.0f) {
+            if (e->lash2) { e->lash2 = 0; e->mode = PM_TURN; e->mode_t = 0.2f; e->lash_t = 0; }   /* mad: comes straight back for another go */
+            else { e->mode = PM_RECOVER; e->mode_t = 0; }
+        }
+        break;
+    }
+    case PM_RECOVER:
+        e->vx *= expf(-dt * 3.0f); e->vy *= expf(-dt * 3.0f);
+        if (e->mode_t > 0.5f) { e->mode = PM_HOVER; e->cd = mad ? 0.7f : 1.1f; }
+        break;
+    case PM_SCRIBBLE: {                                    /* zig-zags its tip about, leaving a pencil line that hurts */
+        float T = mad ? 1.5f : 1.2f;
+        float px = -e->ay, py = e->ax;
+        float zig = sinf(e->mode_t * 16.0f) * 260.0f;
+        float vx = e->ax * 260.0f + px * zig, vy = e->ay * 260.0f + py * zig;
+        e->x = wrapx(g, e->x + vx * dt);
+        e->y = clampf(e->y + vy * dt, 60.0f, 420.0f);
+        float want = atan2f(-vy, -vx);                     /* writing with the tip */
+        float da = want - e->ang;
+        while (da > PI_F) da -= TAU;
+        while (da < -PI_F) da += TAU;
+        e->ang += clampf(da, -14.0f * dt, 14.0f * dt);
+        pencil_ends(e, &tx, &ty, &ex, &ey);
+        lead_point(g, tx, clampf(ty, 40.0f, 440.0f), e->lash_k);
+        sfxp(g, SFX_HIT, 70);
+        if (e->mode_t > T) { e->mode = PM_HOVER; e->cd = 0.9f; }
+        break;
+    }
+    }
+    /* bumping into the pencil hurts too - but only while it's hovering or rubbing (turning, scribbling and
+     * getting its breath back it's too busy to notice you) */
+    if ((e->mode == PM_HOVER || e->mode == PM_SWEEP) && g->alive && g->inv_t <= 0 && hits_enemy(g, e, g->px, g->py, SHIP_R * 0.8f)) hurt_player(g);
+}
+
+static void update_level_bits(Game *g, float dt)
+{
+    for (int i = 0; i < 48; i++) if (g->erase_mark[i][3] > 0) g->erase_mark[i][3] -= dt;
+    for (int i = 0; i < 128; i++) {
+        float *l = g->lead[i];
+        if (l[2] <= 0) continue;
+        l[2] -= dt;
+        if (!g->alive || g->inv_t > 0) continue;
+        float dx = wd(g, g->px - l[0]), dy = g->py - l[1];
+        if (dx * dx + dy * dy < (6.0f + SHIP_R * 0.7f) * (6.0f + SHIP_R * 0.7f) && l[2] < 2.6f) hurt_player(g);
+    }
+}
+
 static void update_enemies(Game *g, float dt)
 {
     for (int i = 0; i < MAX_EN; i++) {
@@ -1229,6 +1515,69 @@ static void update_enemies(Game *g, float dt)
         case EN_BOSS2:
             update_boss2(g, i, dt);
             continue;
+        case EN_BOSS3:
+            update_boss3(g, i, dt);
+            continue;
+        case EN_SNIP: {                                     /* creeps up, opens wide, then SNAPS forward */
+            e->mode_t += dt;
+            switch (e->mode) {
+            case 0:
+                e->vx = approach(e->vx, dx / dist * 150.0f, dt * 2.5f);
+                e->vy = approach(e->vy, dy / dist * 150.0f, dt * 2.5f);
+                e->ang = atan2f(dy, dx);
+                if (g->alive && dist < 220.0f && e->mode_t > 0.8f) { e->mode = 1; e->mode_t = 0; }
+                break;
+            case 1:
+                e->vx *= expf(-dt * 6.0f); e->vy *= expf(-dt * 6.0f);
+                e->ang = atan2f(dy, dx);
+                if (e->mode_t > 0.45f) { e->mode = 2; e->mode_t = 0; e->ax = dx / dist; e->ay = dy / dist; sfxp(g, SFX_FLIP, 160); }
+                break;
+            case 2:
+                e->vx = e->ax * 720.0f; e->vy = e->ay * 720.0f;
+                if (e->mode_t > 0.32f) { e->mode = 3; e->mode_t = 0; }
+                break;
+            default:
+                e->vx *= expf(-dt * 4.0f); e->vy *= expf(-dt * 4.0f);
+                if (e->mode_t > 0.9f) { e->mode = 0; e->mode_t = 0; }
+                break;
+            }
+            break;
+        }
+        case EN_PLANE: {                                    /* zooms across, loops back, drops bullets on you */
+            float dir = e->vx >= 0 ? 1.0f : -1.0f;
+            if (dx * dir < -700.0f) dir = -dir;
+            e->vx = approach(e->vx, dir * 380.0f, dt * 1.2f);
+            e->vy = approach(e->vy, clampf((g->py - e->y) * 0.6f, -90.0f, 90.0f) + sinf(e->t * 3.0f + e->phase) * 40.0f, dt * 2.0f);
+            e->ang = atan2f(e->vy, e->vx);
+            e->cd -= dt;
+            if (e->cd <= 0) {
+                e->cd = frange(g, 1.2f, 1.7f);
+                float sx = sxof(g, e->x);
+                if (g->alive && sx > 20 && sx < VW - 20) { fire_ebullet(g, e->x, e->y, atan2f(dy, dx), 230.0f, 0); sfxp(g, SFX_ESHOT, 170); }
+            }
+            break;
+        }
+        case EN_PINWHEEL: {                                 /* drifts into place, then spins out a spiral of bullets */
+            float sd = wd(g, e->x - g->px) > 0 ? 1.0f : -1.0f;
+            float hx = g->px + sd * 260.0f, hy = clampf(g->py + sinf(e->phase) * 110.0f, 90.0f, 390.0f);
+            e->vx = approach(e->vx, clampf(wd(g, hx - e->x), -70.0f, 70.0f), dt * 1.5f);
+            e->vy = approach(e->vy, clampf(hy - e->y, -70.0f, 70.0f), dt * 1.5f);
+            e->ang += dt * (e->idx ? 5.0f : 1.6f);
+            if (e->idx) {
+                e->fuse -= dt; e->aux -= dt;
+                if (e->aux <= 0) {
+                    e->aux = 0.12f;
+                    for (int k = 0; k < 2; k++) fire_ebullet(g, e->x, e->y, e->ang + PI_F * (float)k, 150.0f, 0);
+                    sfxp(g, SFX_ESHOT, 190);
+                }
+                if (e->fuse <= 0) { e->idx = 0; e->cd = 2.2f; }
+            } else {
+                e->cd -= dt;
+                float sx = sxof(g, e->x);
+                if (e->cd <= 0 && g->alive && sx > 0 && sx < VW) { e->idx = 1; e->fuse = 2.3f; e->aux = 0; }
+            }
+            break;
+        }
         case EN_UFO: {                                      /* hovers above or below you, fires 3-shot bursts */
             float sd = wd(g, e->x - g->px) > 0 ? 1.0f : -1.0f;
             float tx = g->px + sd * 260.0f, ty = clampf(g->py + (e->phase > PI_F ? -115.0f : 115.0f), 80.0f, 400.0f) + sinf(e->t * 2.0f) * 20.0f;
@@ -1294,7 +1643,7 @@ static void update_enemies(Game *g, float dt)
             float cx = wd(g, e->x - g->px), cy = e->y - g->py, rr = e->r * 0.85f + SHIP_R;
             if (cx * cx + cy * cy < rr * rr) {
                 hurt_player(g);
-                if (e->type == EN_SHARD || e->type == EN_ZIP || e->type == EN_SEG || e->type == EN_BLOBLET) hurt_enemy(g, i, 99.0f, 0, 0);
+                if (e->type == EN_SHARD || e->type == EN_ZIP || e->type == EN_SEG || e->type == EN_BLOBLET || e->type == EN_PLANE) hurt_enemy(g, i, 99.0f, 0, 0);
                 if (e->type == EN_BOMB && e->alive) bomb_burst(g, i);
             }
         }
@@ -1321,7 +1670,7 @@ static void update_projectiles(Game *g, float dt)
             Enemy *e = &g->en[k];
             if (!e->alive || e->warp) continue;
             float dx = wd(g, e->x - b->x), dy = e->y - b->y, rr = e->r + 9.0f;
-            if (fabsf(dx) > rr + 22.0f) continue;
+            if (fabsf(dx) > rr + 22.0f && e->type != EN_BOSS3) continue;
             /* swept test along the bolt's last step so fast bolts can't tunnel */
             float step = b->vx * dt, best = 1e9f;
             for (int s = 0; s <= 2; s++) {
@@ -1329,6 +1678,7 @@ static void update_projectiles(Game *g, float dt)
                 float d = ox * ox + dy * dy;
                 if (d < best) best = d;
             }
+            if (e->type == EN_BOSS3) best = hits_enemy(g, e, b->x, b->y, 9.0f) ? 0.0f : 1e9f;
             if (best < rr * rr) {
                 b->alive = 0;
                 hit_sparks(g, b->x, b->y, b->vx > 0 ? PI_F : 0.0f, ESTAT[e->type].c_light, 3);
@@ -1373,6 +1723,7 @@ static void update_projectiles(Game *g, float dt)
             const Enemy *e = &g->en[k];
             if (!e->alive || e->warp) continue;
             float dx = wd(g, e->x - m->x), dy = e->y - m->y, rr = e->r + 13.0f;
+            if (e->type == EN_BOSS3) { if (hits_enemy(g, e, m->x, m->y, 13.0f)) { missile_explode(g, m); break; } continue; }
             if (dx * dx + dy * dy < rr * rr) { missile_explode(g, m); break; }
         }
     }
@@ -1776,6 +2127,7 @@ void game_update(Game *g, const Input *in, float dt)
             update_player(g, in, g->inbuf, wdt);
             g->inbuf = 0;
             update_enemies(g, wdt);
+            update_level_bits(g, wdt);
             update_projectiles(g, wdt);
             update_pickups(g, wdt);
             update_particles(g, wdt);

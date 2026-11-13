@@ -75,6 +75,21 @@ A page of graph paper, three new doodles mixed in with the level 1 crew, and a n
   hiccups out little blobs. Her googly eyes follow you around and her jaw drops open when she cackles.
   At half health she gets MAD (steam, anger mark, rolling eyes, faster attacks, two tentacles at once).
 
+## Level 3: Cut-Out Cosmos
+
+A collage of construction paper: planets, moons, clouds, dangling stars and rolling hills, each cut out and glued on
+in layers, with crayon doodles drawn on top. Three new (and meaner) enemies, and a new boss:
+
+* **Scissors**: creep up on you, open wide (a red "!" flashes), then SNAP forward in a straight dash. Sidestep the snap.
+* **Paper planes**: fly in V squadrons, loop back round, and fire at you as they pass.
+* **Pinwheels**: park beside you, spin up, and spray a spiral of bullets for a couple of seconds.
+* **The Pencil** (boss): a yellow pencil with a pink eraser and googly eyes. Its big move is trying to **erase you**: it
+  flips round, a pink dotted line tracks you, then the line turns **red** with an X where it will finish - that's your
+  cue to get off the line before it rubs straight through. Anything else the eraser passes over gets rubbed out too:
+  enemies, bullets, crystals and the crayon doodles on the page (they stay gone, leaving scuffed patches).
+  It also scribbles zig-zag pencil lines that hurt to touch while fresh, flicks fans of graphite at you, and sketches
+  new enemies into existence. At half health it shouts "ERASE EVERYTHING!" and rubs twice in a row.
+
 ## Adding levels
 
 Levels live in `source/levels.c`. Copy the LEVEL 1 block, give it a new name, colours and terrain seed, and
@@ -115,5 +130,5 @@ tools/test.c         native test harness, software rasterizer, bots, preview rec
 Handwriting font: **Gloria Hallelujah** by Kimberly Geswein, used under the SIL Open Font License 1.1
 (`tools/fonts/OFL.txt`).
 
-Ship, logo and the Big Head: hand-drawn art in `tools/art/` (`python3 tools/make_art.py` cuts them out of the paper and bakes them
+Ship, logo, the Big Head and the Pencil: hand-drawn art in `tools/art/` (`python3 tools/make_art.py` cuts them out of the paper and bakes them
 into `source/art_data.h`).

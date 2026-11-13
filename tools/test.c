@@ -161,6 +161,7 @@ static Input bot_input(const Game *g, int skill, uint32_t prev_held)
         float dx = wd(g, e->x - g->px);
         float side = dx > 0 ? -1.0f : 1.0f;
         float keep = skill == 2 ? 230.0f : 260.0f;
+        if (e->type == EN_BOSS3) keep += 130.0f;          /* the pencil is long: stand off past its tip */
         tx = g->px + dx + side * keep;
         ty = e->y;
         if ((dx > 0 ? 1 : -1) != g->face && !(prev_held & (BTN_L | BTN_R)) && fabsf(dx) > 60.0f) held |= BTN_L;
@@ -180,6 +181,21 @@ static Input bot_input(const Game *g, int skill, uint32_t prev_held)
         float px = -b->vy / vl, py = b->vx / vl;
         float s = (px * dx + py * dy) >= 0 ? 1.0f : -1.0f;
         ax += px * s * 2.0f; ay += py * s * 2.0f;
+    }
+    /* the pencil's eraser: watch the dotted line and step off it, like a player would */
+    if (g->boss >= 0 && g->en[g->boss].type == EN_BOSS3 && skill != 3) {
+        const Enemy *e = &g->en[g->boss];
+        if ((e->mode == PM_TURN && e->lash_t > 0) || e->mode == PM_SWEEP) {
+            float tx0, ty0, ex0, ey0;
+            pencil_ends(e, &tx0, &ty0, &ex0, &ey0);
+            float lx = e->mode == PM_SWEEP ? wd(g, e->ax - e->aux) : wd(g, e->ax - ex0);
+            float ly = e->mode == PM_SWEEP ? e->ay - e->fuse : e->ay - ey0;
+            float ll = sqrtf(lx * lx + ly * ly) + 0.01f;
+            float rx = wd(g, g->px - (e->mode == PM_SWEEP ? e->aux : ex0)), ry = g->py - (e->mode == PM_SWEEP ? e->fuse : ey0);
+            float perp = (rx * -ly + ry * lx) / ll;
+            float s = perp >= 0 ? 1.0f : -1.0f;
+            if (fabsf(perp) < 110.0f) { ax += -ly / ll * s * 3.0f; ay += lx / ll * s * 3.0f; }
+        }
     }
     if (skill == 2 && (ax * ax + ay * ay) > 3.5f && !(prev_held & BTN_BOOST)) held |= BTN_BOOST;   /* dash out of trouble */
     float mx = clampf(wd(g, tx - g->px) / 80.0f, -1, 1) + ax;
@@ -512,6 +528,23 @@ int main(int argc, char **argv)
                 clears += q.cleared; deaths += q.deaths; sc += q.score;
             }
             printf("  L2 %s x%d: cleared %d/%d, avg deaths %.1f, avg score %ld\n", skill == 1 ? "average" : (skill == 2 ? "keen   " : "clumsy "), seeds, clears, seeds, (double)deaths / seeds, sc / seeds);
+        }
+    }
+
+    printf("\nbot runs (level 3)\n");
+    r = play_level(2, 0, 78, 400, 0, "l3idle");
+    printf("  idle   : %s wave %d score %ld deaths %d\n", r.cleared ? "CLEARED" : "lost", r.wave + 1, r.score, r.deaths);
+    CHECK(!r.cleared, "doing nothing must lose level 3");
+    r = play_level(2, 2, 3, 900, 1, "l3keen");
+    printf("  keen   : %s wave %d score %ld deaths %d time %.0fs rank %c\n", r.cleared ? "CLEARED" : "lost", r.wave + 1, r.score, r.deaths, (double)r.time, "SABC"[r.rank]);
+    if (!quick) {
+        for (int skill = 1; skill <= 3; skill++) {
+            int clears = 0, deaths = 0, seeds = 12, wsum = 0; long sc = 0;
+            for (int s = 0; s < seeds; s++) {
+                Result q = play_level(2, skill, 7000u + (uint32_t)s * 77u, 900, 0, "x");
+                clears += q.cleared; deaths += q.deaths; sc += q.score; wsum += q.wave + 1;
+            }
+            printf("  L3 %s x%d: cleared %d/%d, avg deaths %.1f, avg wave %.1f, avg score %ld\n", skill == 1 ? "average" : (skill == 2 ? "keen   " : "clumsy "), seeds, clears, seeds, (double)deaths / seeds, (double)wsum / seeds, sc / seeds);
         }
     }
 

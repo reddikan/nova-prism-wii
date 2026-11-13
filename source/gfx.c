@@ -81,6 +81,7 @@ static uint8_t tex_crayon[CRAYON_N * CRAYON_N] __attribute__((aligned(32)));
 static uint8_t tex_paper[PAPER_N * PAPER_N] __attribute__((aligned(32)));
 static uint8_t tex_font[FONT_W * FONT_H] __attribute__((aligned(32)));
 static uint8_t tex_font_big[FONTB_W * FONTB_H] __attribute__((aligned(32)));
+static uint8_t tex_cpaper[PAPER_N * PAPER_N] __attribute__((aligned(32)));
 static float   work[CRAYON_N * CRAYON_N];
 
 /* tileable 2D value noise on an n x n texture with `cells` grid cells per side */
@@ -160,6 +161,34 @@ static void make_paper(void)
         }
 }
 
+/* construction paper: blotchy, uneven dye plus lots of long pale fibres and the odd dark fleck */
+static void make_cpaper(void)
+{
+    const int N = PAPER_N;
+    memset(work, 0, sizeof work);
+    uint32_t r = 0xC0457Bu;
+    for (int k = 0; k < 420; k++) {
+        float cx = hf(r++) * N, cy = hf(r++) * N, a = hf(r++) * TAU, len = 5.0f + hf(r++) * 18.0f, inten = 0.35f + hf(r++) * 0.5f;
+        float bend = (hf(r++) - 0.5f) * 0.12f;
+        float x = cx, y = cy;
+        for (float t = 0; t < len; t += 0.5f) {
+            a += bend * 0.5f;
+            x += cosf(a) * 0.5f; y += sinf(a) * 0.5f;
+            int px = ((int)x % N + N) % N, py = ((int)y % N + N) % N;
+            float fade = 1.0f - fabsf(t / len - 0.5f) * 1.4f;
+            if (work[py * N + px] < inten * fade) work[py * N + px] = inten * fade;
+        }
+    }
+    for (int y = 0; y < N; y++)
+        for (int x = 0; x < N; x++) {
+            float v = 0.30f + 0.30f * vnoise2(x, y, N, 8, 0x5150u) + 0.18f * vnoise2(x, y, N, 32, 0x9191u)
+                    + 0.10f * hf((uint32_t)(y * N + x) * 2891336453u) + 0.45f * work[y * N + x];
+            if (hf((uint32_t)(y * N + x) * 0x2545F491u) > 0.9985f) v = 1.0f;   /* specks */
+            if (v > 1) v = 1;
+            tex_cpaper[y * N + x] = (uint8_t)(v * 255.0f);
+        }
+}
+
 void gfx_init(void)
 {
     static int done;
@@ -168,6 +197,7 @@ void gfx_init(void)
     memset(tex_solid, 255, sizeof tex_solid);
     make_crayon();
     make_paper();
+    make_cpaper();
     for (int i = 0; i < FONT_W * FONT_H / 2; i++) {
         tex_font[i * 2]     = (uint8_t)((FONT_PIXELS[i] >> 4) * 17);
         tex_font[i * 2 + 1] = (uint8_t)((FONT_PIXELS[i] & 15) * 17);
@@ -183,6 +213,7 @@ const uint8_t *gfx_tex_data(int tex, int *w, int *h)
     switch (tex) {
     case TEX_CRAYON: *w = CRAYON_N; *h = CRAYON_N; return tex_crayon;
     case TEX_PAPER:  *w = PAPER_N;  *h = PAPER_N;  return tex_paper;
+    case TEX_CPAPER: *w = PAPER_N;  *h = PAPER_N;  return tex_cpaper;
     case TEX_FONT:   *w = FONT_W;   *h = FONT_H;   return tex_font;
     case TEX_FONT_BIG: *w = FONTB_W; *h = FONTB_H; return tex_font_big;
     default:         *w = 8;        *h = 8;        return tex_solid;
@@ -195,6 +226,7 @@ const uint8_t *gfx_tex_rgba(int tex, int *w, int *h)
     case TEX_SHIP: *w = SHIP_W; *h = SHIP_H; return SHIP_RGBA;
     case TEX_LOGO: *w = LOGO_W; *h = LOGO_H; return LOGO_RGBA;
     case TEX_BOSS2: *w = BOSS2_W; *h = BOSS2_H; return BOSS2_RGBA;
+    case TEX_BOSS3: *w = BOSS3_W; *h = BOSS3_H; return BOSS3_RGBA;
     default:       *w = 0; *h = 0; return NULL;
     }
 }
@@ -343,6 +375,15 @@ void crayon_fill(const Poly *p, uint32_t col)
     triangulate(p, col_a(col_mix(col, 0xFFFFFFFFu, 0.15f), 0.45f), 0, 0);     /* thin wash so small shapes read solid */
     gfx_tex(TEX_CRAYON);
     triangulate(p, col, 0, 0);                                                /* waxy strokes (+ a faint wax floor) */
+}
+
+void paper_fill(const Poly *p, uint32_t col)
+{
+    gfx_tex(TEX_SOLID);
+    triangulate(p, col, 0, 0);
+    gfx_tex(TEX_CPAPER);
+    triangulate(p, col_a(col_mix(col, 0xFFFFFFFFu, 0.3f), 0.55f), 0, 0);
+    gfx_tex(TEX_SOLID);
 }
 
 static void dot(float x, float y, float r, uint32_t c)

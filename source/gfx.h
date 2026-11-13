@@ -8,6 +8,7 @@
  *     TEX_CRAYON crayon hatching (diagonal waxy strokes with paper showing through)
  *     TEX_PAPER  paper fibres
  *     TEX_FONT   the handwriting font atlas
+ *     TEX_CPAPER construction paper: coarse mottling and long fibres
  * On the Wii, main.c uploads the textures to the GPU and draws the list with GX; the native test
  * harness rasterizes the very same list in software.
  *
@@ -24,8 +25,8 @@
 #define GFX_MAX_VTX 160000
 #define GFX_MAX_SEG 8192
 
-enum { TEX_SOLID, TEX_CRAYON, TEX_PAPER, TEX_FONT, TEX_FONT_BIG,   /* greyscale masks (alpha = vertex alpha x mask) */
-       TEX_SHIP, TEX_LOGO, TEX_BOSS2,               /* full-colour hand-drawn pictures, RGBA (colour = vertex x picture) */
+enum { TEX_SOLID, TEX_CRAYON, TEX_PAPER, TEX_FONT, TEX_FONT_BIG, TEX_CPAPER,   /* greyscale masks (alpha = vertex alpha x mask) */
+       TEX_SHIP, TEX_LOGO, TEX_BOSS2, TEX_BOSS3,              /* full-colour hand-drawn pictures, RGBA (colour = vertex x picture) */
        TEX_COUNT };
 #define TEX_FIRST_RGBA TEX_SHIP
 
@@ -94,6 +95,8 @@ void pen_poly(const Poly *p, int closed, float width, uint32_t col, uint32_t see
 void pen_line(float x0, float y0, float x1, float y1, float width, uint32_t col, uint32_t seed, float wobble);
 /* strokes only, no wash: big coloured-in areas where the paper should peek through */
 void crayon_scribble(const Poly *p, uint32_t col);
+/* flat cut-out paper fill with construction-paper fibres (uses the current uv anchor) */
+void paper_fill(const Poly *p, uint32_t col);
 /* fill + outline in one go */
 void doodle(const Poly *p, uint32_t fill, uint32_t ink, float width, uint32_t seed);
 

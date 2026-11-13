@@ -119,6 +119,33 @@ static inline void tentacle_points(const Enemy *e, int k, float *x, float *y)
     }
 }
 
+/* ---- the Pencil (level 3 boss) ---- */
+#define BOSS3_LEN    300.0f                   /* tip to end of the eraser, on screen */
+#define BOSS3_PIC_W  (BOSS3_LEN / (B3_END_U - B3_TIP_U))
+#define BOSS3_PIC_H  (BOSS3_PIC_W * 160.0f / 512.0f)
+#define ERASER_R     38.0f
+enum { PM_HOVER, PM_TURN, PM_SWEEP, PM_RECOVER, PM_SCRIBBLE };   /* what the pencil is up to (e->mode) */
+/* e->ang points from the middle of the pencil to its eraser end */
+static inline void pencil_ends(const Enemy *e, float *tx, float *ty, float *ex, float *ey)
+{
+    float c = cosf(e->ang), s = sinf(e->ang), h = BOSS3_LEN * 0.5f;
+    *tx = e->x - c * h; *ty = e->y - s * h;
+    *ex = e->x + c * h; *ey = e->y + s * h;
+}
+
+/* ---- erasable crayon doodles on the construction paper (screen positions, shared with the drawing) ---- */
+#define CP_DOODLES 48
+static inline void cp_doodle(const Game *g, int i, float *sx, float *sy, float *r)
+{
+    const float P = 1900.0f, f = 0.7f;
+    uint32_t h = 0xD00Du + (uint32_t)i * 7919u;
+    float x = fmodf(((float)(hash32(h) >> 8) / 16777216.0f) * P - g->scroll * f, P);
+    if (x < 0) x += P;
+    *sx = x - 200.0f;
+    *sy = 56.0f + ((float)(hash32(h + 1) >> 8) / 16777216.0f) * 370.0f + (240.0f - g->py) * 0.05f;
+    *r = 8.0f + ((float)(hash32(h + 3) >> 8) / 16777216.0f) * 9.0f;
+}
+
 /* terrain: piecewise-linear ceiling and floor */
 static inline float terr_spacing(const Game *g) { return g->W / (float)g->L->nterr; }
 static inline float terr_at(const Game *g, const float *h, float x)

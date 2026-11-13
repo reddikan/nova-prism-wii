@@ -48,8 +48,9 @@ typedef struct {
 #define MAX_WAVES   12
 
 enum { EN_SHARD, EN_ZIP, EN_SPORE, EN_SERPENT, EN_SEG, EN_BOSS, EN_SHIELD,
-       EN_UFO, EN_BOMB, EN_BLOB, EN_BLOBLET, EN_BOSS2, EN_TYPES };
-#define IS_BOSS(t) ((t) == EN_BOSS || (t) == EN_BOSS2)
+       EN_UFO, EN_BOMB, EN_BLOB, EN_BLOBLET, EN_BOSS2,
+       EN_SNIP, EN_PLANE, EN_PINWHEEL, EN_BOSS3, EN_TYPES };
+#define IS_BOSS(t) ((t) == EN_BOSS || (t) == EN_BOSS2 || (t) == EN_BOSS3)
 
 /* A spawn group inside a wave: `count` enemies of `type` appear `delay` seconds after the wave starts.
  * side: 0 = either side of the player (random), 1 = ahead, -1 = behind. */
@@ -62,7 +63,7 @@ typedef struct {
     const char *name;
     const char *boss_sub;                /* line under the boss name card */
     int         style;
-    int         paper;                   /* 0 = ruled notebook paper, 1 = graph paper */
+    int         paper;                   /* 0 = ruled notebook paper, 1 = graph paper, 2 = construction paper */
     uint32_t    seed;                    /* terrain shape */
     float       width;                   /* world circumference (the level wraps around) */
     int         nterr;                   /* terrain control points */
@@ -91,6 +92,8 @@ typedef struct {
     float   aux;                         /* per-type scratch (zip: cruise height, boss: spiral timer) */
     float   lash_t, lash_ang;            /* big head: tentacle lash in progress */
     int     lash_k, lash2;
+    int     mode;                        /* scissors / pencil: what it's doing right now */
+    float   mode_t, ax, ay;              /* time in this mode, and a remembered point or direction */
 } Enemy;
 
 typedef struct { uint8_t alive; float x, y, vx, vy, life, dmg; } Bolt;
@@ -138,6 +141,10 @@ typedef struct {
     float trail[TRAIL_N][2]; int trail_n; float trail_t;
     int   boost_charges; float boost_recharge, boost_t, boost_vx, boost_vy;
     float title_sx;                       /* title screen: the ship's spot on screen */
+    /* level 3: the pencil boss's eraser rubs things out */
+    float erase_mark[48][4]; int erase_next;      /* rubbed-out smudges: world x, y, radius, life */
+    uint8_t doodle_gone[64];                       /* crayon doodles on the page that have been erased */
+    float lead[128][4]; int lead_next;             /* pencil scribble hazard: x, y, life, stroke */
     float wpn_flash[4];                   /* HUD tile flash for A B X Y */
     float empty_t, empty_wpn;
     uint32_t inbuf;                       /* button presses buffered across hit-stop frames */

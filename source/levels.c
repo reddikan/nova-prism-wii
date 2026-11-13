@@ -9,8 +9,10 @@
  *         EN_SPORE (grumpy puffballs that spit), EN_SERPENT (caterpillar that pops segment by segment),
  *         EN_UFO (flying saucer, fires 3-shot bursts), EN_BOMB (fuse bomb: bursts into bullets unless popped),
  *         EN_BLOB (splits into two little blobs),
- *         EN_BOSS (the Hexacore) / EN_BOSS2 (the Big Head) - put a boss alone in the last wave
- * paper : 0 = ruled notebook paper, 1 = graph paper
+ *         EN_SNIP (scissors: creep up, open wide, then snap forward), EN_PLANE (paper planes: fly in a V,
+ *         shoot as they pass), EN_PINWHEEL (spins up and sprays a spiral of bullets),
+ *         EN_BOSS (the Hexacore) / EN_BOSS2 (the Big Head) / EN_BOSS3 (the Pencil) - put a boss alone in the last wave
+ * paper : 0 = ruled notebook paper, 1 = graph paper, 2 = construction paper collage
  * side  : 0 = random side of the player, 1 = in front of the ship, -1 = behind it
  * delay : seconds after the wave starts
  * A wave ends when everything in it has been destroyed.
@@ -95,6 +97,40 @@ const LevelDef LEVELS[] = {
             { 6, { {EN_UFO, 3, 1, 0.0f}, {EN_BLOB, 3, -1, 1.5f}, {EN_SPORE, 3, 0, 3.0f}, {EN_BOMB, 4, 0, 5.0f}, {EN_SHARD, 12, 0, 7.0f}, {EN_ZIP, 10, 0, 10.0f} } },
             /* 10: the Big Head */
             { 1, { {EN_BOSS2, 1, 1, 0.0f} } },
+        },
+    },
+    /* ---------------------------------------------------------------- LEVEL 3 */
+    {
+        .name    = "CUT-OUT COSMOS",
+        .boss_sub = "it wants to erase you!",
+        .style   = STYLE_SKYWAY,
+        .paper   = 2,
+        .seed    = 0xC0115A6Eu,
+        .width   = 3416.0f,
+        .nterr   = 28,
+        .rough   = 0.75f,
+        .nwaves  = 10,
+        .waves = {
+            /* 1: scissors! wait for them to open, then get out of the way */
+            { 3, { {EN_SNIP, 3, 1, 0.0f}, {EN_SHARD, 10, -1, 2.0f}, {EN_SNIP, 2, -1, 5.0f} } },
+            /* 2: a squadron of paper planes */
+            { 3, { {EN_PLANE, 5, 1, 0.0f}, {EN_ZIP, 10, -1, 3.0f}, {EN_PLANE, 5, -1, 7.0f} } },
+            /* 3: pinwheels - their spirals fill the sky */
+            { 3, { {EN_PINWHEEL, 2, 1, 0.0f}, {EN_SHARD, 10, -1, 2.0f}, {EN_PINWHEEL, 1, -1, 6.0f} } },
+            /* 4: snips and bombs */
+            { 4, { {EN_SNIP, 4, 0, 0.0f}, {EN_BOMB, 4, 1, 2.0f}, {EN_SNIP, 3, -1, 6.0f}, {EN_ZIP, 10, 0, 8.0f} } },
+            /* 5: planes from both sides with saucers */
+            { 4, { {EN_PLANE, 5, 1, 0.0f}, {EN_PLANE, 5, -1, 1.0f}, {EN_UFO, 2, 0, 4.0f}, {EN_SHARD, 12, 0, 7.0f} } },
+            /* 6: pinwheel crossfire, blobs underneath */
+            { 4, { {EN_PINWHEEL, 2, 0, 0.0f}, {EN_BLOB, 3, 1, 2.0f}, {EN_SNIP, 3, -1, 5.0f}, {EN_PINWHEEL, 1, 0, 9.0f} } },
+            /* 7: caterpillars and planes */
+            { 4, { {EN_SERPENT, 2, 0, 0.0f}, {EN_PLANE, 5, 1, 3.0f}, {EN_SNIP, 3, -1, 6.0f}, {EN_BOMB, 4, 0, 9.0f} } },
+            /* 8: swarm with scissors */
+            { 5, { {EN_ZIP, 14, 1, 0.0f}, {EN_SNIP, 5, -1, 1.5f}, {EN_SHARD, 12, 0, 4.0f}, {EN_PLANE, 5, 0, 7.0f}, {EN_SPORE, 2, 0, 9.0f} } },
+            /* 9: everything new at once */
+            { 6, { {EN_PINWHEEL, 2, 1, 0.0f}, {EN_PLANE, 5, -1, 1.5f}, {EN_SNIP, 4, 0, 3.0f}, {EN_UFO, 2, 0, 5.0f}, {EN_BLOB, 3, 0, 7.0f}, {EN_PLANE, 5, 1, 10.0f} } },
+            /* 10: the Pencil */
+            { 1, { {EN_BOSS3, 1, 1, 0.0f} } },
         },
     },
 };
